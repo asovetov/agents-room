@@ -1,0 +1,441 @@
+package hub
+
+import (
+	"context"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+
+	"github.com/asovetov/agents-room/internal/store"
+)
+
+// nowFn aliases the store clock so tests can move time forward without
+// sleeping. It is restored by each test that replaces it.
+func newHub(t *testing.T) *Hub {
+	t.Helper()
+	h, err := OpenPath(filepath.Join(t.TempDir(), "room.db"))
+	if err != nil {
+		t.Fatalf("open hub: %v", err)
+	}
+	t.Cleanup(func() { h.Close() })
+	return h
+}
+
+// join registers a session in a room and fails the test on error.
+func join(t *testing.T, h *Hub, room, label string, tags ...string) *Session {
+	t.Helper()
+	s, err := h.Join(context.Background(), JoinOptions{
+		Room: room, Harness: "test", Label: label, Tags: tags, Autonomy: AutonomyWake,
+	})
+	if err != nil {
+		t.Fatalf("join %s: %v", label, err)
+	}
+	return s
+}
+
+func TestSendDirectAndBroadcast(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+	c := join(t, h, "repo:x", "c")
+
+	if _, err := h.Send(ctx, SendOptions{From: a.ID, To: b.ID, Subject: "hi", Body: "body"}); err != nil {
+		t.Fatalf("send direct: %v", err)
+	}
+	got, err := h.Recv(ctx, b.ID, 0)
+	if err != nil {
+		t.Fatalf("recv b: %v", err)
+	}
+	if len(got) != 1 || got[0].Subject != "hi" {
+		t.Fatalf("b got %d messages, want 1", len(got))
+	}
+	if got[0].State != StateRead {
+		t.Fatalf("state after recv = %q, want %q", got[0].State, StateRead)
+	}
+
+	// A broadcast reaches b and c but never the sender.
+	if _, err := h.Send(ctx, SendOptions{From: a.ID, To: "*", Subject: "all", Body: "x"}); err != nil {
+		t.Fatalf("send broadcast: %v", err)
+	}
+	for _, s := range []*Session{a, b, c} {
+		n, err := h.Unread(ctx, s.ID)
+		if err != nil {
+			t.Fatalf("unread %s: %v", s.Label, err)
+		}
+		want := 1
+		if s.ID == a.ID {
+			want = 0
+		}
+		if n != want {
+			t.Errorf("%s unread = %d, want %d", s.Label, n, want)
+		}
+	}
+}
+
+func TestSendToFileSelectorReachesLeaseHolder(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+	_ = join(t, h, "repo:x", "c")
+
+	if _, err := h.Claim(ctx, b.ID, "src/mavlink/wire.go", 60, ModeExclusive); err != nil {
+		t.Fatalf("claim: %v", err)
+	}
+
+	if _, err := h.Send(ctx, SendOptions{
+		From: a.ID, To: "file:src/mavlink/**", Subject: "protocol", Body: "see note",
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	n, err := h.Unread(ctx, b.ID)
+	if err != nil {
+		t.Fatalf("unread b: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("lease holder unread = %d, want 1", n)
+	}
+}
+
+func TestSendToTagSelector(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b", "protocol")
+	c := join(t, h, "repo:x", "c", "ui")
+
+	if _, err := h.Send(ctx, SendOptions{
+		From: a.ID, To: "tag:protocol", Subject: "s", Body: "b",
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	for _, tc := range []struct {
+		s    *Session
+		want int
+	}{{b, 1}, {c, 0}} {
+		n, err := h.Unread(ctx, tc.s.ID)
+		if err != nil {
+			t.Fatalf("unread: %v", err)
+		}
+		if n != tc.want {
+			t.Errorf("%s unread = %d, want %d", tc.s.Label, n, tc.want)
+		}
+	}
+}
+
+func TestSendUnknownSessionFails(t *testing.T) {
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	if _, err := h.Send(context.Background(), SendOptions{
+		From: a.ID, To: "nope", Subject: "s", Body: "b",
+	}); err == nil {
+		t.Fatal("send to unknown session succeeded, want error")
+	}
+}
+
+func TestExclusiveLeaseIsExclusive(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	first, err := h.Claim(ctx, a.ID, "src/wire.go", 60, ModeExclusive)
+	if err != nil {
+		t.Fatalf("claim a: %v", err)
+	}
+	if !first.OK {
+		t.Fatal("first claim failed")
+	}
+
+	second, err := h.Claim(ctx, b.ID, "src/wire.go", 60, ModeExclusive)
+	if err != nil {
+		t.Fatalf("claim b: %v", err)
+	}
+	if second.OK {
+		t.Fatal("second exclusive claim succeeded, want denied")
+	}
+	if second.Holder == nil || second.Holder.Owner != a.ID {
+		t.Fatalf("holder = %+v, want session a", second.Holder)
+	}
+}
+
+func TestSharedLeasesCoexist(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	if r, _ := h.Claim(ctx, a.ID, "docs/api.md", 60, ModeShared); !r.OK {
+		t.Fatal("first shared claim failed")
+	}
+	if r, _ := h.Claim(ctx, b.ID, "docs/api.md", 60, ModeShared); !r.OK {
+		t.Fatal("second shared claim failed")
+	}
+	// An exclusive claim on the same path must still fail.
+	if r, _ := h.Claim(ctx, b.ID, "docs/api.md", 60, ModeExclusive); r.OK {
+		t.Fatal("exclusive claim over shared leases succeeded, want denied")
+	}
+}
+
+func TestExpiredLeaseIsReclaimable(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	if r, _ := h.Claim(ctx, a.ID, "src/wire.go", 1, ModeExclusive); !r.OK {
+		t.Fatal("claim a failed")
+	}
+	// Move the clock past the lease without sleeping.
+	old := store.Now
+	t.Cleanup(func() { h.setClock(old) })
+	h.setClock(func() int64 { return old() + 10 })
+
+	r, err := h.Claim(ctx, b.ID, "src/wire.go", 60, ModeExclusive)
+	if err != nil {
+		t.Fatalf("claim b: %v", err)
+	}
+	if !r.OK {
+		t.Fatalf("claim after expiry failed: %+v", r)
+	}
+}
+
+func TestConcurrentClaimsHaveOneWinner(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	const n = 8
+	sessions := make([]*Session, n)
+	for i := range sessions {
+		sessions[i] = join(t, h, "repo:x", "s")
+	}
+
+	var wg sync.WaitGroup
+	results := make([]bool, n)
+	for i := range sessions {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			r, err := h.Claim(ctx, sessions[i].ID, "src/hot.go", 60, ModeExclusive)
+			if err != nil {
+				t.Errorf("claim %d: %v", i, err)
+				return
+			}
+			results[i] = r.OK
+		}(i)
+	}
+	wg.Wait()
+
+	winners := 0
+	for _, ok := range results {
+		if ok {
+			winners++
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("winners = %d, want exactly 1", winners)
+	}
+}
+
+func TestLeaveReleasesLeases(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	if r, _ := h.Claim(ctx, a.ID, "src/wire.go", 60, ModeExclusive); !r.OK {
+		t.Fatal("claim failed")
+	}
+	if err := h.Leave(ctx, a.ID); err != nil {
+		t.Fatalf("leave: %v", err)
+	}
+	r, err := h.Claim(ctx, b.ID, "src/wire.go", 60, ModeExclusive)
+	if err != nil {
+		t.Fatalf("claim b: %v", err)
+	}
+	if !r.OK {
+		t.Fatal("lease survived the holder leaving")
+	}
+}
+
+func TestExpiredMessageIsNotDelivered(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	if _, err := h.Send(ctx, SendOptions{
+		From: a.ID, To: b.ID, Subject: "s", Body: "b", TTL: 1,
+	}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	old := store.Now
+	t.Cleanup(func() { h.setClock(old) })
+	h.setClock(func() int64 { return old() + 10 })
+
+	got, err := h.Recv(ctx, b.ID, 0)
+	if err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("received %d expired messages, want 0", len(got))
+	}
+}
+
+func TestAckMovesStateForward(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	m, err := h.Send(ctx, SendOptions{From: a.ID, To: b.ID, Subject: "s", Body: "b"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if _, err := h.Recv(ctx, b.ID, 0); err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	if err := h.Ack(ctx, b.ID, m.ID); err != nil {
+		t.Fatalf("ack: %v", err)
+	}
+	// Acking twice is harmless, but acking from the wrong session fails.
+	if err := h.Ack(ctx, a.ID, m.ID); err == nil {
+		t.Fatal("ack from the sender succeeded, want error")
+	}
+}
+
+func TestDriftSeverity(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	path := filepath.Join(t.TempDir(), "wire.go")
+	if err := os.WriteFile(path, []byte("v1"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := h.NoteRead(ctx, a.ID, path); err != nil {
+		t.Fatalf("note read: %v", err)
+	}
+	r, err := h.DriftCheck(ctx, a.ID, path)
+	if err != nil {
+		t.Fatalf("drift: %v", err)
+	}
+	if r.Severity != DriftSafe {
+		t.Fatalf("unchanged file severity = %q, want SAFE", r.Severity)
+	}
+
+	// Someone edits the file, nobody holds a lease: MINOR.
+	if err := os.WriteFile(path, []byte("v2"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err = h.DriftCheck(ctx, a.ID, path)
+	if err != nil {
+		t.Fatalf("drift: %v", err)
+	}
+	if r.Severity != DriftMinor {
+		t.Fatalf("severity = %q, want MINOR", r.Severity)
+	}
+
+	// b holds a lease and edits again: CRITICAL for a.
+	abs, _ := filepath.Abs(path)
+	if res, _ := h.Claim(ctx, b.ID, abs, 60, ModeExclusive); !res.OK {
+		t.Fatal("claim b failed")
+	}
+	if err := os.WriteFile(path, []byte("v3"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err = h.DriftCheck(ctx, a.ID, path)
+	if err != nil {
+		t.Fatalf("drift: %v", err)
+	}
+	if r.Severity != DriftCritical || r.Holder != b.ID {
+		t.Fatalf("severity = %q holder = %q, want CRITICAL and b", r.Severity, r.Holder)
+	}
+}
+
+func TestDriftWithoutBaselineIsSafe(t *testing.T) {
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	path := filepath.Join(t.TempDir(), "x.go")
+	if err := os.WriteFile(path, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	r, err := h.DriftCheck(context.Background(), a.ID, path)
+	if err != nil {
+		t.Fatalf("drift: %v", err)
+	}
+	if r.Severity != DriftSafe || r.Changed {
+		t.Fatalf("got %+v, want SAFE without baseline", r)
+	}
+}
+
+func TestJoinClampsAutonomy(t *testing.T) {
+	h := newHub(t)
+	s, err := h.Join(context.Background(), JoinOptions{
+		Room: "repo:x", Harness: "test", Autonomy: 99,
+	})
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if s.Autonomy > AutonomyWake {
+		t.Fatalf("autonomy = %d, want <= %d", s.Autonomy, AutonomyWake)
+	}
+	if _, err := h.Join(context.Background(), JoinOptions{
+		Room: "repo:x", Harness: "test", Autonomy: -1,
+	}); err == nil {
+		t.Fatal("negative autonomy accepted, want error")
+	}
+}
+
+func TestWhoListsRoomSessions(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	join(t, h, "repo:x", "a")
+	join(t, h, "repo:x", "b")
+	join(t, h, "repo:y", "c")
+
+	got, err := h.Who(ctx, "repo:x")
+	if err != nil {
+		t.Fatalf("who: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("who returned %d sessions, want 2", len(got))
+	}
+	for _, s := range got {
+		if strings.HasPrefix(s.Room, "repo:y") {
+			t.Fatalf("session from another room leaked: %+v", s)
+		}
+	}
+}
+
+func TestRepoRoomName(t *testing.T) {
+	if got := RepoRoom("/home/user/proj/thing"); got != "repo:thing" {
+		t.Fatalf("RepoRoom = %q, want repo:thing", got)
+	}
+}
+
+func TestGlobMatch(t *testing.T) {
+	cases := []struct {
+		pattern, path string
+		want          bool
+	}{
+		{"src/wire.go", "src/wire.go", true},
+		{"src/*.go", "src/wire.go", true},
+		{"src/*.go", "src/sub/wire.go", false},
+		{"src/**", "src/sub/wire.go", true},
+		{"src/**", "src", true},
+		{"src/**", "other/wire.go", false},
+	}
+	for _, c := range cases {
+		if got := globMatch(c.pattern, c.path); got != c.want {
+			t.Errorf("globMatch(%q, %q) = %v, want %v", c.pattern, c.path, got, c.want)
+		}
+	}
+}

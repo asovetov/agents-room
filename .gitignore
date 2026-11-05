@@ -1,4 +1,31 @@
-.chat-broker/
-build/
-*.pyc
-__pycache__/
+# Build output
+/build/
+/dist/
+/bin/
+
+# Go test and coverage artifacts
+*.test
+*.out
+coverage.*
+
+# Local databases (the store lives in ~/.agents-room by default, but tests
+# and local runs may create one here)
+*.db
+*.db-wal
+*.db-shm
+
+# Local runtime state
+.agents-room/
+
+# Editor and OS noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# Compiled binaries produced by `go build` in the repo root
+/agents-room
+/agents-room-mcp
+/agents-room-hook
+*.exe
