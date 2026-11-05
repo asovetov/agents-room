@@ -1,37 +1,120 @@
-# chat-broker
+# agents-room
 
-Брокер сообщений между чатами и харнесами в одном проекте.
+A coordination layer for AI coding agents working in the same codebase from
+different terminals and different harnesses.
 
-Две консоли с агентами работают над разными задачами в одном репозитории
-и не знают друг о друге: правят одни файлы, принимают несовместимые
-решения, узнают об этом через конфликт в git. `chat-broker` — локальный
-демон, через который они сами договариваются: кто что сказал, кто держит
-файл, кто ждёт ответа.
+You run five agent sessions on one large project. Each one edits files, makes
+decisions, and moves on. Nothing tells session two that session one is already
+in `src/api/`. Nothing tells the agent in the other repository that the
+wire format changed. You become the courier, copying messages between windows.
 
-**Статус:** идея и ТЗ. Кода нет.
+agents-room answers three questions the harnesses do not answer:
 
-## Документы
+- **Who is here?** Which sessions are working in this project, on what, right now.
+- **Who is touching this file?** Leases on paths, with expiry and stale-holder detection.
+- **Is my read still valid?** Drift warnings when a file changed under you.
 
-| Файл | Что |
-|---|---|
-| [`docs/idea.md`](docs/idea.md) | зачем это нужно, что есть на рынке, почему ничего не подходит |
-| [`docs/spec.md`](docs/spec.md) | ТЗ: модель данных, MCP-инструменты, схема БД, тесты |
-| [`docs/CONTEXT.md`](docs/CONTEXT.md) | точка входа для нового чата: что читать, что решено, что решать |
+It also delivers messages addressed by *what* rather than *who*:
+`file:src/api/**` reaches whoever holds those files, `tag:protocol`
+reaches everyone working on the protocol.
 
-## Коротко
+## What it is not
+
+- Not a chat platform. Lasting decisions belong in your long-term memory tool.
+- Not a replacement for a harness's own cross-session messaging. Where the
+  harness can reach a peer natively, agents-room adds the part it cannot do:
+  leases, presence, and addressing by file.
+- Not a multi-machine service. One machine, one store.
+
+## How it works
+
+There is no daemon. The shared state is a SQLite database in WAL mode at
+`~/.agents-room/room.db`, and every participant is a short-lived process that
+opens it directly.
 
 ```
-чат A ──┐
-чат B ──┼── MCP ── chat-broker (демон, localhost) ── SQLite
-чат C ──┘
+   Claude Code        Codex           Hermes        (any MCP client)
+       │                │                │
+   MCP + hook       MCP + hook          MCP
+       └────────────────┴────────────────┘
+                        │
+              ~/.agents-room/room.db
+              rooms · sessions · messages
+              leases · drift · events
 ```
 
-- `broker_send` / `broker_recv` / `broker_ack` — сообщения с состоянием
-  доставки;
-- `broker_lock` / `broker_unlock` — арбитраж файлов с TTL;
-- push через хук `UserPromptSubmit`, pull через `broker_recv`;
-- брокер недоступен — чаты молчат, а не падают.
+Why no daemon: no port to manage, no orphan process, a crashed agent cannot
+take the shared state with it, and rooms across related repositories work
+without extra plumbing.
 
-## С чего начать
+Concurrency is SQLite's job. Leases are claimed inside `BEGIN IMMEDIATE`, so
+two agents claiming the same file cannot both win.
 
-Прочитать `docs/CONTEXT.md`.
+## Wake signals
+
+A recipient is told that messages are waiting; it fetches the body itself.
+
+```
+[agents-room] 2 unread in room "repo:gcs"; call msg_recv
+```
+
+The body stays in the store and arrives as a tool result. This keeps context
+small and makes the delivery state honest: `read` means the recipient saw the
+content, not that a notification was emitted.
+
+For Claude Code the signal is posted to the session's own inbox socket, which
+wakes an idle session without approval. For other harnesses the hook falls
+back to their event contract, and for harnesses with no wake lever the
+message waits as `undeliverable` until the agent pulls it.
+
+## Autonomy
+
+Each session runs at one of three levels, negotiated with the operator:
+
+| Level | Name | Behaviour |
+|---|---|---|
+| 0 | `notify` | one-line signal, never holds the end of a turn |
+| 1 | `hold` | holds the end of a turn until unread is fetched |
+| 2 | `wake` | as level 1, and may start a turn in an idle session |
+
+Level 1 suits heavy contention or a long important task. Level 2 suits an
+operator who stepped away. Level 0 suits an operator sitting next to the
+machine. `room_who` shows every session's effective level.
+
+## Install
+
+```bash
+go build -o bin/agents-room      ./cmd/agents-room
+go build -o bin/agents-room-mcp  ./cmd/agents-room-mcp
+go build -o bin/agents-room-hook ./cmd/agents-room-hook
+```
+
+Linux, macOS and Windows on amd64 and arm64. No cgo, no external runtime.
+Setup per harness is in [`docs/harness-setup.md`](docs/harness-setup.md).
+
+## Use
+
+```bash
+agents-room join --label "users API" --tag protocol --autonomy 1
+agents-room who
+agents-room lease claim --session <id> --path src/api/users.go --ttl 600
+agents-room send  --session <id> --to file:src/api/** --subject "dialect" --body "..."
+agents-room recv  --session <id>
+agents-room watch
+```
+
+The same operations are MCP tools: `room_join`, `room_who`, `msg_send`,
+`msg_recv`, `msg_ack`, `lease_claim`, `lease_release`, `lease_check`,
+`lease_list`, `note_read`, `drift_check`. The full reference is in
+[`docs/protocol.md`](docs/protocol.md).
+
+## Status
+
+Early. The store, rooms, sessions, messages, leases, drift, the CLI, the MCP
+server and the Claude Code wake path work and are tested. See
+[`docs/plan.md`](docs/plan.md) for milestones and what is still open.
+
+## License
+
+GPLv3. Free to use, modify and redistribute under the same terms. This
+project will not be sold.
