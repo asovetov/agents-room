@@ -432,6 +432,12 @@ func TestGlobMatch(t *testing.T) {
 		{"src/**", "src/sub/wire.go", true},
 		{"src/**", "src", true},
 		{"src/**", "other/wire.go", false},
+		// A selector must never match across a directory separator on any
+		// platform. filepath.Match gets this wrong on Windows, where a
+		// backslash is the separator and "*" spans "/".
+		{"src/*.go", "src/sub/wire.go", false},
+		{`src\*.go`, "src/sub/wire.go", false},
+		{`src\*.go`, "src/wire.go", true},
 	}
 	for _, c := range cases {
 		if got := globMatch(c.pattern, c.path); got != c.want {

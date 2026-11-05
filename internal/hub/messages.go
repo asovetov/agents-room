@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"path/filepath"
+	pathpkg "path"
 	"strings"
 )
 
@@ -368,12 +368,17 @@ func nullString(s string) any {
 	return s
 }
 
-// globMatch matches a path against a pattern with the same semantics as
-// filepath.Match, but a trailing /** also matches everything below.
+// globMatch matches a path against a pattern, with a trailing /** also
+// matching everything below.
+//
+// It uses path.Match, not filepath.Match: on Windows the latter treats
+// backslash as the separator, so "*" would match across "/" and a selector
+// meant for one directory would reach the whole tree. Selectors are always
+// written with forward slashes, on every platform.
 func globMatch(pattern, path string) bool {
-	pattern = filepath.ToSlash(pattern)
-	path = filepath.ToSlash(path)
-	if ok, _ := filepath.Match(pattern, path); ok {
+	pattern = strings.ReplaceAll(pattern, `\`, "/")
+	path = strings.ReplaceAll(path, `\`, "/")
+	if ok, _ := pathpkg.Match(pattern, path); ok {
 		return true
 	}
 	if strings.HasSuffix(pattern, "/**") {
