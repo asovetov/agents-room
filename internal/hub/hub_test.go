@@ -690,3 +690,43 @@ func TestRenewAllDoesNotReviveAnExpiredLease(t *testing.T) {
 		t.Fatalf("holder = %+v (%v), want b", holder, err)
 	}
 }
+
+// Passing another chat's harness key silently adopts its session: the join
+// succeeds, and the caller answers messages addressed to someone else. That
+// is a mistake worth naming, but not one worth refusing a join over.
+func TestJoinWarnsAboutAForeignHarnessKey(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "mine")
+
+	s, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "someone-else",
+	})
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if s.Warning == "" {
+		t.Fatal("a foreign harness key joined without a warning")
+	}
+	if !strings.Contains(s.Warning, "someone-else") {
+		t.Fatalf("warning = %q, want the key it names", s.Warning)
+	}
+
+	// The right key, and a caller with no harness in its environment, are
+	// both silent: the warning must not cry wolf on the normal path.
+	ok, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "claude-code", HarnessKey: "mine"})
+	if err != nil {
+		t.Fatalf("join with the right key: %v", err)
+	}
+	if ok.Warning != "" {
+		t.Fatalf("the right key warned: %q", ok.Warning)
+	}
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
+	none, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "x"})
+	if err != nil {
+		t.Fatalf("join without an env key: %v", err)
+	}
+	if none.Warning != "" {
+		t.Fatalf("a harness with no session id in the environment warned: %q", none.Warning)
+	}
+}

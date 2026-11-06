@@ -29,7 +29,15 @@ harness fills it from the harness session id it inherited
 (`CLAUDE_CODE_SESSION_ID` and its equivalents) when the model omits it. Claude Code fires
 `SessionStart` on startup, resume, clear, compact and fork, and Hermes fires
 `on_session_start` on each new chat; without the key, one chat would appear
-as five sessions. The key is the harness's own session id. The MCP 2026-07-28 revision removed protocol sessions and
+as five sessions. The key is the harness's own session id.
+
+A key that is not the caller's own `CLAUDE_CODE_SESSION_ID` is a warning, not
+a refusal. Passing the wrong one adopts another chat's session silently: the
+join succeeds and the caller starts answering messages addressed to someone
+else. The warning names both ids and goes to stderr in the CLI, so the session
+id on stdout stays parseable, and into `msg_send`-style text in MCP.
+
+The MCP 2026-07-28 revision removed protocol sessions and
 server-initiated requests, and asks servers to mint a handle the model passes
 back; this follows that shape.
 
@@ -190,7 +198,7 @@ for it. Re-read before editing.
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `room_join` | `room?`, `extra_rooms?`, `label?`, `tags?`, `autonomy?`, `harness?`, `harness_key?` | `session_id`, `rooms`, `autonomy` |
+| `room_join` | `room?`, `extra_rooms?`, `label?`, `tags?`, `autonomy?`, `harness?`, `harness_key?` | `session_id`, `rooms`, `autonomy`, `warning?` |
 | `room_leave` | `session_id` | nothing, leaves every room |
 | `room_leave_room` | `session_id`, `room` | nothing, stays in the rest |
 | `room_who` | `session_id?`, `room?` | sessions |

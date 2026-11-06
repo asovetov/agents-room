@@ -322,3 +322,21 @@ func TestDoctorReportsExpiringLease(t *testing.T) {
 		t.Fatalf("doctor named the warning but not the path:\n%s", aged)
 	}
 }
+
+// The session id is the one thing a script parses from join, so a warning
+// goes to stderr and leaves stdout as the bare id.
+func TestJoinWarningGoesToStderr(t *testing.T) {
+	run := setup(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "mine")
+
+	code, out, errOut := run("join", "--room", "repo:x", "--key", "someone-else")
+	if code != 0 {
+		t.Fatalf("join exit %d: %s", code, errOut)
+	}
+	if len(strings.TrimSpace(out)) != 16 {
+		t.Fatalf("stdout = %q, want only the session id", out)
+	}
+	if !strings.Contains(errOut, "someone-else") {
+		t.Fatalf("stderr = %q, want the warning", errOut)
+	}
+}

@@ -149,6 +149,11 @@ func runJoin(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return fail(stderr, err)
 	}
 	fmt.Fprintln(stdout, s.ID)
+	if s.Warning != "" {
+		// The id still goes to stdout: the join worked, and a caller parsing
+		// it must not have to cope with a warning in the middle of the line.
+		fmt.Fprintf(stderr, "warning: %s\n", s.Warning)
+	}
 	return 0
 }
 
