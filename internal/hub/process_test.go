@@ -5,7 +5,9 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"testing"
+	"time"
 )
 
 // deadPID returns a pid that is certain to belong to no running process.
@@ -42,7 +44,23 @@ func TestProcessAliveRejectsRetiredPID(t *testing.T) {
 
 // The joining process exits within milliseconds of the join, so its own pid
 // is the wrong thing to record: prune would see a live chat as dead.
+//
+// The test cannot rely on a harness being somewhere up its own process chain:
+// under CI there is none, and the answer is then 0 by design. A stand-in
+// process that outlives the join is started instead, and the harness is made
+// to name it the way a real one would.
 func TestJoinRecordsHarnessPIDNotTheJoiningProcess(t *testing.T) {
+	helper := exec.Command(os.Args[0], "-test.run=TestHarnessPIDHelperProcess")
+	helper.Env = append(os.Environ(), "AGENTS_ROOM_HELPER=1")
+	if err := helper.Start(); err != nil {
+		t.Skipf("cannot start a stand-in harness: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = helper.Process.Kill()
+		_ = helper.Wait()
+	})
+	t.Setenv("AGENTS_ROOM_PID", strconv.Itoa(helper.Process.Pid))
+
 	ctx := context.Background()
 	h := newHub(t)
 
@@ -53,9 +71,19 @@ func TestJoinRecordsHarnessPIDNotTheJoiningProcess(t *testing.T) {
 	if s.PID == os.Getpid() {
 		t.Fatalf("join recorded its own pid %d, which dies with the command", s.PID)
 	}
-	if s.PID <= 0 {
-		t.Fatalf("join recorded pid %d, so liveness cannot be checked at all", s.PID)
+	if s.PID != helper.Process.Pid {
+		t.Fatalf("join recorded pid %d, want the harness pid %d", s.PID, helper.Process.Pid)
 	}
+}
+
+// TestHarnessPIDHelperProcess is not a test. It is the process that stands in
+// for the chat: it has to be alive while the test runs, and it exits on its
+// own if the test never reaps it.
+func TestHarnessPIDHelperProcess(t *testing.T) {
+	if os.Getenv("AGENTS_ROOM_HELPER") != "1" {
+		t.Skip("only runs as the stand-in harness")
+	}
+	time.Sleep(30 * time.Second)
 }
 
 // The recorded pid must be a process that outlives the command. Walking to

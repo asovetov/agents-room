@@ -247,13 +247,23 @@ func TestDoctorReportsDuplicatePID(t *testing.T) {
 		t.Fatalf("open store: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.SQL().ExecContext(context.Background(), `
+	exec := func(q string) {
+		t.Helper()
+		if _, err := db.SQL().ExecContext(context.Background(), q); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	exec(`
 		INSERT INTO sessions (id, room_id, harness, cwd, pid, label, tags, autonomy,
 		                      joined_at, last_seen, harness_key)
 		SELECT 'dup1', room_id, harness, cwd, pid, label, tags, autonomy,
-		       joined_at, last_seen, '' FROM sessions LIMIT 1`); err != nil {
-		t.Fatalf("insert duplicate session: %v", err)
-	}
+		       joined_at, last_seen, '' FROM sessions LIMIT 1`)
+	// The duplicate has to be in the room as well, or it is not a chat that
+	// room_who could have counted twice.
+	exec(`
+		INSERT INTO session_rooms (session_id, room_id, joined_at)
+		SELECT 'dup1', room_id, joined_at FROM session_rooms
+		WHERE session_id = (SELECT id FROM sessions LIMIT 1)`)
 
 	_, out, _ := run("doctor")
 	if !strings.Contains(out, "has 2 sessions") {
