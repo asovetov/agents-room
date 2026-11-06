@@ -337,6 +337,47 @@ func TestPruneStaleRemovesOnlyOldSessions(t *testing.T) {
 	}
 }
 
+// A session reachable only through a shared room is still prunable from
+// that room. The first version filtered on the legacy sessions.room_id, so
+// `prune --room shared:x` silently matched nobody.
+func TestPruneStaleFindsSessionsBySharedMembership(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	stale, err := h.Join(ctx, JoinOptions{
+		Room: "repo:gcs", ExtraRooms: []string{"shared:storefront"},
+		Harness: "test", HarnessKey: "stale",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := h.now
+	t.Cleanup(func() { h.setClock(old) })
+
+	h.setClock(func() int64 { return old() + 3600 })
+	if _, err := h.Join(ctx, JoinOptions{
+		Room: "repo:tracker", ExtraRooms: []string{"shared:storefront"},
+		Harness: "test", HarnessKey: "fresh",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := h.PruneStale(ctx, "shared:storefront", 30*time.Minute)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("pruned %d sessions from the shared room, want 1", n)
+	}
+	who, _ := h.Who(ctx, "shared:storefront")
+	if len(who) != 1 {
+		t.Fatalf("shared room still has %d sessions, want 1", len(who))
+	}
+	if who[0].ID == stale.ID {
+		t.Fatal("the stale session survived")
+	}
+}
+
 func TestPruneStaleOnUnknownRoomIsHarmless(t *testing.T) {
 	h := newHub(t)
 	n, err := h.PruneStale(context.Background(), "repo:nope", time.Hour)

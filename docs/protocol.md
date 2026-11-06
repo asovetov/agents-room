@@ -33,7 +33,9 @@ back; this follows that shape.
 
 A session's `last_seen` updates whenever it calls a tool, so `room_who` shows
 who is alive. The MCP server does this in one middleware over `tools/call`,
-so a tool added later inherits it without its own `Touch` call.
+so a tool added later inherits it without its own `Touch` call. `prune` reads
+the same membership table as `room_who`, so a session reachable only through
+a shared room can still be swept from that room.
 
 A shared room is spelled `shared:<name>`. An extra room named without a
 prefix gets one at join time, because `--also storefront` and
