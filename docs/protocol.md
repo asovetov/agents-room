@@ -109,7 +109,8 @@ A selector that matches nobody is not an error: a broadcast in a room of one,
 or a `file:` selector on a path only the sender holds, is a legitimate send
 with zero recipients. The count is reported back instead of being hidden, so
 a sender does not mistake a stored message for a delivered one. The CLI
-prints a warning on stderr; `msg_send` returns `recipients`.
+prints a warning on stderr; `msg_send` returns `recipients`, and `msg_recv`
+reports the same count for the message it just delivered.
 
 ## Delivery states
 

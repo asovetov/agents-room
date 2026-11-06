@@ -373,13 +373,26 @@ func TestSendReportsZeroRecipients(t *testing.T) {
 	}
 
 	// With a second session the count is honest.
-	join(t, h, "repo:x", "b")
+	second := join(t, h, "repo:x", "b")
 	c, err := h.Send(ctx, SendOptions{From: a.ID, To: "*", Body: "x"})
 	if err != nil {
 		t.Fatalf("broadcast: %v", err)
 	}
 	if c.Recipients != 1 {
 		t.Fatalf("broadcast recipients = %d, want 1", c.Recipients)
+	}
+
+	// The recipient must see the same number the sender was told, not the
+	// zero a freshly built Message starts with.
+	got, err := h.Recv(ctx, second.ID, 0)
+	if err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("recipient got %d messages, want 1", len(got))
+	}
+	if got[0].Recipients != 1 {
+		t.Fatalf("recipient sees recipients = %d, want 1", got[0].Recipients)
 	}
 }
 

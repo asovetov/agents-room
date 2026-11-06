@@ -374,9 +374,14 @@ func (h *Hub) Recv(ctx context.Context, sessionID string, limit int) ([]Message,
 		return nil, fmt.Errorf("recv: expire: %w", err)
 	}
 
+	// Recipients is the message's own delivery count, not this recipient's.
+	// A reader asking "did this reach anyone else" needs the real number;
+	// leaving it at zero would say the message reached nobody, which is
+	// false for every message a reader can see.
 	rows, err := tx.QueryContext(ctx, `
 		SELECT m.id, m.sender, m.selector, m.subject, m.body,
-		       COALESCE(m.reply_to, ''), m.created_at, m.expires_at, d.state
+		       COALESCE(m.reply_to, ''), m.created_at, m.expires_at, d.state,
+		       (SELECT COUNT(*) FROM deliveries d2 WHERE d2.message_id = m.id)
 		FROM deliveries d
 		JOIN messages m ON m.id = d.message_id
 		WHERE d.session_id = ? AND d.state IN (?, ?, ?)
@@ -392,7 +397,7 @@ func (h *Hub) Recv(ctx context.Context, sessionID string, limit int) ([]Message,
 		var m Message
 		var expires sql.NullInt64
 		if err := rows.Scan(&m.ID, &m.Sender, &m.Selector, &m.Subject, &m.Body,
-			&m.ReplyTo, &m.CreatedAt, &expires, &m.State); err != nil {
+			&m.ReplyTo, &m.CreatedAt, &expires, &m.State, &m.Recipients); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("recv: scan: %w", err)
 		}
