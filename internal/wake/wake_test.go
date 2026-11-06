@@ -76,6 +76,37 @@ func TestCheckCountsAndTouches(t *testing.T) {
 	if !strings.Contains(res.Line, "repo:x") {
 		t.Fatalf("line = %q, want the room name", res.Line)
 	}
+
+	// The hook marks what it signalled. A second Stop must not signal the
+	// same message again: at wake level each signal is a fresh turn, and a
+	// turn whose Stop signals again never ends.
+	if _, err := h.MarkOffered(ctx, b.ID, hub.StateAccepted); err != nil {
+		t.Fatalf("mark offered: %v", err)
+	}
+	again, err := Check(ctx, h, b.ID)
+	if err != nil {
+		t.Fatalf("check after offering: %v", err)
+	}
+	if again.Unread != 0 || again.Line != "" {
+		t.Fatalf("a message already signalled was signalled again: %+v", again)
+	}
+
+	// It is still unread, so the agent still has something to fetch.
+	if n, err := h.Unread(ctx, b.ID); err != nil || n != 1 {
+		t.Fatalf("unread after offering = %d (%v), want 1", n, err)
+	}
+
+	// A new message reopens the lever, and the line counts both.
+	if _, err := h.Send(ctx, hub.SendOptions{From: a.ID, To: b.ID, Subject: "s2", Body: "b2"}); err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := Check(ctx, h, b.ID)
+	if err != nil {
+		t.Fatalf("check with a new message: %v", err)
+	}
+	if fresh.Unread != 2 {
+		t.Fatalf("unread = %d, want both the offered and the new one", fresh.Unread)
+	}
 }
 
 // TestPostToSocketDelivers builds a real Unix socket that speaks the Claude

@@ -443,6 +443,24 @@ func (h *Hub) Unread(ctx context.Context, sessionID string) (int, error) {
 	return n, nil
 }
 
+// Pending counts deliveries no wake signal has been emitted for yet.
+//
+// It is the number a hook may act on. Unread includes rows already offered,
+// and offering one twice at wake level starts a second turn for the same
+// message: the agent is never allowed to end, which is a loop, not a
+// reminder. Once a signal has gone out, the message waits for msg_recv.
+func (h *Hub) Pending(ctx context.Context, sessionID string) (int, error) {
+	var n int
+	err := h.db.SQL().QueryRowContext(ctx, `
+		SELECT COUNT(*) FROM deliveries
+		WHERE session_id = ? AND state = ?`,
+		sessionID, StateStored).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("count pending: %w", err)
+	}
+	return n, nil
+}
+
 // Ack marks a message as confirmed by its recipient.
 func (h *Hub) Ack(ctx context.Context, sessionID, messageID string) error {
 	res, err := h.db.SQL().ExecContext(ctx, `
