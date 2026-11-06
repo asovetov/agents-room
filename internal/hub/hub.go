@@ -777,6 +777,25 @@ func RepoRoom(dir string) string {
 	return "repo:" + filepath.Base(repoRoot(dir))
 }
 
+// HarnessKeyFromEnv returns the harness session id this process inherited, or
+// an empty string when the harness does not export one.
+//
+// It exists so that a caller which forgets harness_key still rejoins its own
+// session instead of minting a second one. Only variables the harness sets
+// itself are read; anything else would key on the wrong thing.
+func HarnessKeyFromEnv() string {
+	for _, name := range []string{
+		"CLAUDE_CODE_SESSION_ID",
+		"CODEX_SESSION_ID",
+		"HERMES_SESSION_ID",
+	} {
+		if v := strings.TrimSpace(os.Getenv(name)); v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 // HarnessName is a best-effort label for the current harness. It is never
 // used for authorisation.
 func HarnessName() string {

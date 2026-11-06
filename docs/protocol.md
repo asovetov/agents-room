@@ -24,7 +24,9 @@ Override with `AGENTS_ROOM_DB`. There is no daemon.
 `room_join` returns a session id. Every other tool takes it back as an
 explicit handle.
 
-Passing `harness_key` makes a join idempotent. Claude Code fires
+Passing `harness_key` makes a join idempotent, and an MCP server spawned by a
+harness fills it from the harness session id it inherited
+(`CLAUDE_CODE_SESSION_ID` and its equivalents) when the model omits it. Claude Code fires
 `SessionStart` on startup, resume, clear, compact and fork, and Hermes fires
 `on_session_start` on each new chat; without the key, one chat would appear
 as five sessions. The key is the harness's own session id. The MCP 2026-07-28 revision removed protocol sessions and
