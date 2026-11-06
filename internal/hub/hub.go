@@ -261,6 +261,13 @@ func (h *Hub) Leave(ctx context.Context, sessionID string) error {
 		`DELETE FROM leases WHERE owner = ?`, sessionID); err != nil {
 		return fmt.Errorf("release leases: %w", err)
 	}
+	// deliveries.session_id has no foreign key, so the session's rows do not
+	// cascade. Left behind they are counted by Unread and Pending forever,
+	// and no one can read them: the session that would fetch them is gone.
+	if _, err := h.db.SQL().ExecContext(ctx,
+		`DELETE FROM deliveries WHERE session_id = ?`, sessionID); err != nil {
+		return fmt.Errorf("drop deliveries: %w", err)
+	}
 	for _, id := range roomIDs {
 		if err := h.appendEvent(ctx, id, "session.leave", map[string]any{"session": sessionID}); err != nil {
 			return err
@@ -471,6 +478,12 @@ func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration)
 		if _, err := h.db.SQL().ExecContext(ctx,
 			`DELETE FROM leases WHERE owner = ?`, id); err != nil {
 			return 0, fmt.Errorf("prune: release leases: %w", err)
+		}
+		// Same reason as in Leave: the column has no foreign key, so the
+		// rows would outlive the session and be counted as unread forever.
+		if _, err := h.db.SQL().ExecContext(ctx,
+			`DELETE FROM deliveries WHERE session_id = ?`, id); err != nil {
+			return 0, fmt.Errorf("prune: drop deliveries: %w", err)
 		}
 	}
 	if len(ids) > 0 {

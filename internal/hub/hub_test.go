@@ -262,6 +262,47 @@ func TestLeaveReleasesLeases(t *testing.T) {
 	}
 }
 
+// deliveries.session_id has no foreign key, so a session's deliveries are
+// not removed with it. Left behind they are counted as unread by every hook
+// event forever, and the session that would have fetched them is gone.
+func TestLeaveDropsTheSessionsDeliveries(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	if _, err := h.Send(ctx, SendOptions{From: a.ID, To: b.ID, Subject: "s", Body: "b"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if n, err := h.Unread(ctx, b.ID); err != nil || n != 1 {
+		t.Fatalf("unread before leave = %d (%v), want 1", n, err)
+	}
+
+	if err := h.Leave(ctx, b.ID); err != nil {
+		t.Fatalf("leave: %v", err)
+	}
+
+	var left int
+	if err := h.db.SQL().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deliveries WHERE session_id = ?`, b.ID).Scan(&left); err != nil {
+		t.Fatalf("count deliveries: %v", err)
+	}
+	if left != 0 {
+		t.Fatalf("%d deliveries survived the session, want 0", left)
+	}
+
+	// The message itself stays: a is still a participant and may want to
+	// know what it sent.
+	var messages int
+	if err := h.db.SQL().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM messages WHERE sender = ?`, a.ID).Scan(&messages); err != nil {
+		t.Fatalf("count messages: %v", err)
+	}
+	if messages != 1 {
+		t.Fatalf("%d messages survived, want the sent one to stay", messages)
+	}
+}
+
 func TestExpiredMessageIsNotDelivered(t *testing.T) {
 	ctx := context.Background()
 	h := newHub(t)

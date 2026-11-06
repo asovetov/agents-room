@@ -170,3 +170,74 @@ func TestDefaultPathFallsBackToHome(t *testing.T) {
 		t.Fatalf("path = %q, want a room.db under the home directory", got)
 	}
 }
+
+// A session deleted before deliveries had a foreign key left its rows
+// behind. They are invisible in room_who, never read, and still counted as
+// unread by the hook, so the upgrade drops them.
+func TestMigrateDropsOrphanDeliveries(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "room.db")
+	raw, err := sql.Open("sqlite", path+"?_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := raw.ExecContext(ctx, schemaV1); err != nil {
+		t.Fatalf("apply v1 schema: %v", err)
+	}
+	if _, err := raw.ExecContext(ctx, `
+		CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	// Stop before migration 4, so the upgrade under test is the one that
+	// removes the rows.
+	if _, err := raw.ExecContext(ctx,
+		`INSERT INTO schema_migrations (version, applied_at) VALUES (1, 1), (2, 1), (3, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx,
+		`INSERT INTO rooms (id, name, created_at) VALUES ('r1', 'repo:old', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	// One live session with a delivery, one orphan delivery whose session is
+	// already gone.
+	if _, err := raw.ExecContext(ctx,
+		`INSERT INTO sessions (id, room_id, harness, cwd, pid, label, tags, autonomy, joined_at, last_seen)
+		 VALUES ('s1', 'r1', 'claude-code', '/tmp', 1, 'live', '[]', 1, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.ExecContext(ctx,
+		`INSERT INTO messages (id, room_id, sender, selector, subject, body, created_at)
+		 VALUES ('m1', 'r1', 's1', '*', 's', 'b', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	for _, sid := range []string{"s1", "ghost"} {
+		if _, err := raw.ExecContext(ctx,
+			`INSERT INTO deliveries (message_id, session_id, state, updated_at) VALUES ('m1', ?, 'stored', 1)`,
+			sid); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw.Close()
+
+	db, err := Open(path)
+	if err != nil {
+		t.Fatalf("open upgraded store: %v", err)
+	}
+	defer db.Close()
+
+	var ghosts, live int
+	if err := db.SQL().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deliveries WHERE session_id = 'ghost'`).Scan(&ghosts); err != nil {
+		t.Fatalf("count orphans: %v", err)
+	}
+	if err := db.SQL().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deliveries WHERE session_id = 's1'`).Scan(&live); err != nil {
+		t.Fatalf("count live: %v", err)
+	}
+	if ghosts != 0 {
+		t.Fatalf("%d orphan deliveries survived the upgrade, want 0", ghosts)
+	}
+	if live != 1 {
+		t.Fatalf("live delivery count = %d, want 1: the migration dropped a row it should keep", live)
+	}
+}
