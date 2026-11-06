@@ -1,7 +1,12 @@
 package hook
 
 import (
+	"context"
 	"encoding/json"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/asovetov/agents-room/internal/hub"
@@ -135,6 +140,88 @@ func TestCodexOutputContract(t *testing.T) {
 		if out.HookSpecific.EventName != event || out.HookSpecific.Context != line {
 			t.Fatalf("codex %s = %+v", event, out.HookSpecific)
 		}
+	}
+}
+
+// A Stop hook that blocks a Stop which is itself the continuation of a block
+// never lets the turn end. Claude Code marks that case with stop_hook_active,
+// and the hook must go quiet on it whatever the autonomy level says.
+func TestStopHookDoesNotBlockItsOwnContinuation(t *testing.T) {
+	ctx := context.Background()
+	h, err := hub.OpenPath(filepath.Join(t.TempDir(), "room.db"))
+	if err != nil {
+		t.Fatalf("open hub: %v", err)
+	}
+	defer h.Close()
+
+	self, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "k",
+		Autonomy: hub.AutonomyHold,
+	})
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	other, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "other", Autonomy: hub.AutonomyNotify,
+	})
+	if err != nil {
+		t.Fatalf("join other: %v", err)
+	}
+	if _, err := h.Send(ctx, hub.SendOptions{From: other.ID, To: self.ID, Body: "hi"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	// The first Stop is allowed to hold: the guard must not silence it.
+	if got := captureStdout(t, func() int {
+		return nudge(ctx, h, "claude-code", "repo:x", "k", "Stop", false)
+	}); got == "" {
+		t.Fatal("a Stop that is not a continuation produced no hold, so the guard proves nothing")
+	}
+
+	// The continuation must be silent, or the loop never ends.
+	if got := captureStdout(t, func() int {
+		return nudge(ctx, h, "claude-code", "repo:x", "k", "Stop", true)
+	}); got != "" {
+		t.Fatalf("a Stop continuing a block produced %q, which is the loop", got)
+	}
+}
+
+// captureStdout runs fn and returns what it wrote to stdout.
+func captureStdout(t *testing.T, fn func() int) string {
+	t.Helper()
+	old := os.Stdout
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	os.Stdout = w
+	code := fn()
+	w.Close()
+	os.Stdout = old
+
+	out, err := io.ReadAll(r)
+	r.Close()
+	if err != nil {
+		t.Fatalf("read captured stdout: %v", err)
+	}
+	if code != 0 {
+		t.Fatalf("hook returned %d", code)
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func TestStopHookActiveParsesFromPayload(t *testing.T) {
+	in := readInputFrom(strings.NewReader(`{"session_id":"s","stop_hook_active":true}`))
+	if !in.StopHookActive {
+		t.Fatal("stop_hook_active was not read from the payload")
+	}
+	if in.SessionID != "s" {
+		t.Fatalf("session id = %q", in.SessionID)
+	}
+
+	// Absent means false: most events carry no such field.
+	if readInputFrom(strings.NewReader(`{"session_id":"s"}`)).StopHookActive {
+		t.Fatal("stop_hook_active defaulted to true")
 	}
 }
 
