@@ -830,20 +830,41 @@ func RepoRoom(dir string) string {
 	return "repo:" + filepath.Base(repoRoot(dir))
 }
 
-// HarnessPIDFromEnv returns the pid of the harness process this one was
-// spawned by, or 0 when the environment does not name one.
+// harnessProcessNames are the program names of the chats this project knows.
+// The harness is recognised by its own name, never by "the nearest parent":
+// a hook runs under a shell, and the shell exits before anyone looks.
+var harnessProcessNames = map[string]bool{
+	"claude": true,
+	"codex":  true,
+	"hermes": true,
+}
+
+// HarnessPIDFromEnv returns the pid of the harness process that owns this
+// one, or 0 when it cannot be found.
 //
-// The join and MCP processes are short-lived children of the chat, so their
-// own pid is gone by the time anyone asks whether the session is alive. The
-// parent pid is the one that lives as long as the chat does.
+// The join and MCP processes are short-lived children of the chat, and the
+// shell between them is short-lived too, so neither their own pid nor their
+// parent's names the session. The process chain is walked until a known
+// harness appears; AGENTS_ROOM_PID short-circuits that when a harness sets
+// it.
 func HarnessPIDFromEnv() int {
 	if v := strings.TrimSpace(os.Getenv("AGENTS_ROOM_PID")); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
 			return n
 		}
 	}
-	if ppid := os.Getppid(); ppid > 1 {
-		return ppid
+	pid := os.Getppid()
+	// A shell or two between the command and the chat is normal; a longer
+	// chain means the harness is not what we think it is.
+	for depth := 0; depth < 6 && pid > 1; depth++ {
+		if harnessProcessNames[processName(pid)] {
+			return pid
+		}
+		next, err := parentPID(pid)
+		if err != nil || next == pid {
+			break
+		}
+		pid = next
 	}
 	return 0
 }

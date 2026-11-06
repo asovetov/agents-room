@@ -46,8 +46,11 @@ leases for a process that still exists.
 
 The pid has to be the harness process, not the process that joined: `join`
 and `mcp` are short-lived children of the chat, so their own pid is dead
-before anyone looks. A session records `AGENTS_ROOM_PID` when it is set and
-its parent pid otherwise.
+before anyone looks. Nor is the immediate parent enough, because a hook runs
+under a shell that exits at once. A session records `AGENTS_ROOM_PID` when it
+is set; otherwise the process chain is walked until a known harness name
+(`claude`, `codex`, `hermes`) appears. When none is found, the session
+records no pid and prune keeps it, which is the safe direction.
 
 A shared room is spelled `shared:<name>`. An extra room named without a
 prefix gets one at join time, because `--also aerobasis` and
