@@ -17,7 +17,7 @@ import (
 )
 
 //go:embed schema.sql
-var schemaSQL string
+var schemaV1 string
 
 // DB is a handle on the shared store.
 type DB struct {
@@ -63,12 +63,13 @@ func Open(path string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("ping store: %w", err)
 	}
-	if _, err := db.ExecContext(ctx, schemaSQL); err != nil {
+	d := &DB{sql: db, path: path}
+	if err := d.migrate(ctx); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("apply schema: %w", err)
+		return nil, err
 	}
 
-	return &DB{sql: db, path: path}, nil
+	return d, nil
 }
 
 // OpenDefault opens the store at DefaultPath.

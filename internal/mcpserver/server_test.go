@@ -1,0 +1,203 @@
+package mcpserver
+
+import (
+	"context"
+	"path/filepath"
+	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/asovetov/agents-room/internal/hub"
+)
+
+// connect wires a client to a server over the in-memory transport, the same
+// way a harness would connect over stdio.
+func connect(t *testing.T) (*mcp.ClientSession, *hub.Hub) {
+	t.Helper()
+	h, err := hub.OpenPath(filepath.Join(t.TempDir(), "room.db"))
+	if err != nil {
+		t.Fatalf("open hub: %v", err)
+	}
+	t.Cleanup(func() { h.Close() })
+
+	srv := New(h)
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+
+	ctx := context.Background()
+	ss, err := srv.Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatalf("connect server: %v", err)
+	}
+	t.Cleanup(func() { ss.Close() })
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil)
+	cs, err := client.Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatalf("connect client: %v", err)
+	}
+	t.Cleanup(func() { cs.Close() })
+
+	return cs, h
+}
+
+// call invokes a tool and fails the test on a protocol error.
+func call(t *testing.T, cs *mcp.ClientSession, name string, args map[string]any) map[string]any {
+	t.Helper()
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      name,
+		Arguments: args,
+	})
+	if err != nil {
+		t.Fatalf("%s: %v", name, err)
+	}
+	if res.IsError {
+		t.Fatalf("%s returned a tool error: %v", name, res.Content)
+	}
+	out, _ := res.StructuredContent.(map[string]any)
+	return out
+}
+
+func TestToolsAreListed(t *testing.T) {
+	cs, _ := connect(t)
+	res, err := cs.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	want := map[string]bool{
+		"room_join": false, "room_leave": false, "room_who": false,
+		"room_set_autonomy_cap": false,
+		"msg_send":              false, "msg_recv": false, "msg_ack": false, "msg_unread": false,
+		"lease_claim": false, "lease_renew": false, "lease_release": false,
+		"lease_check": false, "lease_list": false,
+		"note_read": false, "drift_check": false,
+	}
+	for _, tool := range res.Tools {
+		if _, ok := want[tool.Name]; ok {
+			want[tool.Name] = true
+		}
+		if tool.Description == "" {
+			t.Errorf("tool %q has no description", tool.Name)
+		}
+	}
+	for name, seen := range want {
+		if !seen {
+			t.Errorf("tool %q is not registered", name)
+		}
+	}
+}
+
+func TestJoinSendRecvOverMCP(t *testing.T) {
+	cs, _ := connect(t)
+	ctx := context.Background()
+
+	a := call(t, cs, "room_join", map[string]any{
+		"room": "repo:x", "harness": "claude-code", "harness_key": "aaa", "label": "a",
+	})
+	b := call(t, cs, "room_join", map[string]any{
+		"room": "repo:x", "harness": "codex", "harness_key": "bbb", "label": "b",
+	})
+	aID, _ := a["session_id"].(string)
+	bID, _ := b["session_id"].(string)
+	if aID == "" || bID == "" {
+		t.Fatalf("join returned empty ids: a=%v b=%v", a, b)
+	}
+
+	call(t, cs, "msg_send", map[string]any{
+		"session_id": aID, "to": bID, "subject": "protocol", "body": "dialect 42100",
+	})
+
+	unread := call(t, cs, "msg_unread", map[string]any{"session_id": bID})
+	if n, _ := unread["count"].(float64); n != 1 {
+		t.Fatalf("unread = %v, want 1", unread["count"])
+	}
+
+	recv := call(t, cs, "msg_recv", map[string]any{"session_id": bID})
+	msgs, _ := recv["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("recv returned %d messages, want 1", len(msgs))
+	}
+	first, _ := msgs[0].(map[string]any)
+	if first["body"] != "dialect 42100" {
+		t.Fatalf("body = %v", first["body"])
+	}
+
+	// The sender must not receive its own broadcast either.
+	call(t, cs, "msg_send", map[string]any{
+		"session_id": aID, "to": "*", "subject": "all", "body": "hello",
+	})
+	self := call(t, cs, "msg_unread", map[string]any{"session_id": aID})
+	if n, _ := self["count"].(float64); n != 0 {
+		t.Fatalf("sender unread = %v, want 0", self["count"])
+	}
+
+	_ = ctx
+}
+
+func TestLeaseContentionOverMCP(t *testing.T) {
+	cs, _ := connect(t)
+	a := call(t, cs, "room_join", map[string]any{"room": "repo:x", "harness_key": "a"})
+	b := call(t, cs, "room_join", map[string]any{"room": "repo:x", "harness_key": "b"})
+	aID, _ := a["session_id"].(string)
+	bID, _ := b["session_id"].(string)
+
+	first := call(t, cs, "lease_claim", map[string]any{
+		"session_id": aID, "path": "src/wire.go", "ttl_s": 60,
+	})
+	if ok, _ := first["ok"].(bool); !ok {
+		t.Fatalf("first claim denied: %v", first)
+	}
+
+	second := call(t, cs, "lease_claim", map[string]any{
+		"session_id": bID, "path": "src/wire.go", "ttl_s": 60,
+	})
+	if ok, _ := second["ok"].(bool); ok {
+		t.Fatal("second claim on an exclusive lease succeeded")
+	}
+	holder, _ := second["holder"].(map[string]any)
+	if holder["owner"] != aID {
+		t.Fatalf("holder = %v, want %s", holder["owner"], aID)
+	}
+
+	check := call(t, cs, "lease_check", map[string]any{"session_id": bID, "path": "src/wire.go"})
+	if free, _ := check["free"].(bool); free {
+		t.Fatal("lease_check reports free while a lease is held")
+	}
+
+	call(t, cs, "lease_release", map[string]any{"session_id": aID, "path": "src/wire.go"})
+	after := call(t, cs, "lease_check", map[string]any{"session_id": bID, "path": "src/wire.go"})
+	if free, _ := after["free"].(bool); !free {
+		t.Fatal("lease still held after release")
+	}
+}
+
+func TestAutonomyCapOverMCP(t *testing.T) {
+	cs, _ := connect(t)
+
+	capRes := call(t, cs, "room_set_autonomy_cap", map[string]any{
+		"room": "repo:x", "autonomy": hub.AutonomyHold,
+	})
+	if v, _ := capRes["autonomy"].(float64); int(v) != hub.AutonomyHold {
+		t.Fatalf("cap = %v, want %d", capRes["autonomy"], hub.AutonomyHold)
+	}
+
+	joined := call(t, cs, "room_join", map[string]any{
+		"room": "repo:x", "harness_key": "k", "autonomy": hub.AutonomyWake,
+	})
+	if v, _ := joined["autonomy"].(float64); int(v) != hub.AutonomyHold {
+		t.Fatalf("session autonomy = %v, want it clamped to %d", joined["autonomy"], hub.AutonomyHold)
+	}
+}
+
+func TestToolErrorsAreReported(t *testing.T) {
+	cs, _ := connect(t)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "msg_send",
+		Arguments: map[string]any{"session_id": "does-not-exist", "to": "*", "body": "x"},
+	})
+	if err != nil {
+		t.Fatalf("protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("sending from an unknown session was not reported as a tool error")
+	}
+}

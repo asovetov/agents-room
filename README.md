@@ -95,23 +95,27 @@ Setup per harness is in [`docs/harness-setup.md`](docs/harness-setup.md).
 ## Use
 
 ```bash
-agents-room join --label "MAVLink dialect" --tag protocol --autonomy 1
+agents-room join --label "MAVLink dialect" --tag protocol --autonomy 1 --key "$SESSION_ID"
 agents-room who
+agents-room cap --set 1
 agents-room lease claim --session <id> --path src/mavlink/wire.go --ttl 600
 agents-room send  --session <id> --to file:src/mavlink/** --subject "dialect" --body "..."
 agents-room recv  --session <id>
 agents-room watch
 ```
 
-The same operations are MCP tools: `room_join`, `room_who`, `msg_send`,
-`msg_recv`, `msg_ack`, `lease_claim`, `lease_release`, `lease_check`,
-`lease_list`, `note_read`, `drift_check`. The full reference is in
+The same operations are MCP tools: `room_join`, `room_leave`, `room_who`,
+`room_set_autonomy_cap`, `msg_send`, `msg_recv`, `msg_ack`, `msg_unread`,
+`lease_claim`, `lease_renew`, `lease_release`, `lease_check`, `lease_list`,
+`note_read`, `drift_check`. The full reference is in
 [`docs/protocol.md`](docs/protocol.md).
 
 ## Status
 
 Early. The store, rooms, sessions, messages, leases, drift, the CLI, the MCP
-server and the Claude Code wake path work and are tested. See
+server, schema migrations and the Claude Code and Hermes wake paths work and
+are tested, including an end-to-end suite that runs the real binaries as
+separate processes. See
 [`docs/plan.md`](docs/plan.md) for milestones and what is still open.
 
 ## License

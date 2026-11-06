@@ -237,11 +237,13 @@ continuations).
 |---|---|
 | M0 scaffolding: GPLv3, README, docs, CI, Makefile | done |
 | M1 store, rooms, sessions, messages, leases, CLI | done, tested |
+| M1.5 schema migrations and idempotent join | done, tested |
 | M2 MCP server | done, tools registered |
 | M3 Claude Code wake adapter | done, verified against a live inbox socket |
 | M4 drift and `file:`/`tag:` selectors | done, tested |
 | M5 `watch` view | done, polling |
-| M6 Codex and Hermes adapters | hook output fallback exists; no dedicated adapter |
-| M7 release packaging | not started |
+| M6 Codex and Hermes adapters | Hermes has a dedicated adapter, verified against its hook contract; Codex uses the generic hook output |
+| M6.5 renew, prune, autonomy cap | done, tested |
+| M7 release packaging | cross-builds for six targets; no signed release yet |
 
 Open items are listed in [`CONTEXT.md`](CONTEXT.md).

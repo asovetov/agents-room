@@ -445,3 +445,115 @@ func TestGlobMatch(t *testing.T) {
 		}
 	}
 }
+
+func TestJoinWithHarnessKeyIsIdempotent(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	first, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "abc-123", Label: "a",
+	})
+	if err != nil {
+		t.Fatalf("first join: %v", err)
+	}
+	second, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "abc-123", Label: "a",
+	})
+	if err != nil {
+		t.Fatalf("second join: %v", err)
+	}
+	if first.ID != second.ID {
+		t.Fatalf("rejoin created a new session: %s != %s", first.ID, second.ID)
+	}
+	sessions, err := h.Who(ctx, "repo:x")
+	if err != nil {
+		t.Fatalf("who: %v", err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("room has %d sessions after two joins, want 1", len(sessions))
+	}
+}
+
+func TestJoinDifferentHarnessKeysAreDifferentSessions(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	if _, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "claude-code", HarnessKey: "one"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "claude-code", HarnessKey: "two"}); err != nil {
+		t.Fatal(err)
+	}
+	sessions, _ := h.Who(ctx, "repo:x")
+	if len(sessions) != 2 {
+		t.Fatalf("got %d sessions, want 2", len(sessions))
+	}
+}
+
+func TestJoinWithoutHarnessKeyAlwaysCreates(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a, _ := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "manual"})
+	b, _ := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "manual"})
+	if a.ID == b.ID {
+		t.Fatal("joins without a harness key were deduplicated")
+	}
+}
+
+func TestRoomAutonomyCapClampsJoin(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	if _, err := h.SetRoomAutonomyCap(ctx, "repo:x", AutonomyHold); err != nil {
+		t.Fatalf("set cap: %v", err)
+	}
+	s, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "test", Autonomy: AutonomyWake})
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if s.Autonomy != AutonomyHold {
+		t.Fatalf("autonomy = %d, want %d clamped by the room cap", s.Autonomy, AutonomyHold)
+	}
+}
+
+func TestRoomAutonomyCapRejectsBadValue(t *testing.T) {
+	h := newHub(t)
+	if _, err := h.SetRoomAutonomyCap(context.Background(), "repo:x", 7); err == nil {
+		t.Fatal("cap 7 accepted, want error")
+	}
+}
+
+func TestRoomAutonomyCapDefaultsToWake(t *testing.T) {
+	h := newHub(t)
+	cap, err := h.RoomAutonomyCap(context.Background(), "repo:missing")
+	if err != nil {
+		t.Fatalf("cap: %v", err)
+	}
+	if cap != AutonomyWake {
+		t.Fatalf("default cap = %d, want %d", cap, AutonomyWake)
+	}
+}
+
+func TestFindSession(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	joined, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "key-1", Label: "labelled",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found, err := h.FindSession(ctx, "repo:x", "claude-code", "key-1")
+	if err != nil {
+		t.Fatalf("find: %v", err)
+	}
+	if found == nil || found.ID != joined.ID {
+		t.Fatalf("found %+v, want %s", found, joined.ID)
+	}
+	missing, err := h.FindSession(ctx, "repo:x", "claude-code", "nope")
+	if err != nil {
+		t.Fatalf("find missing: %v", err)
+	}
+	if missing != nil {
+		t.Fatalf("found %+v for an unknown key, want nil", missing)
+	}
+}

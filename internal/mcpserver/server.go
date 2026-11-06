@@ -36,10 +36,12 @@ func New(h *hub.Hub) *mcp.Server {
 // ---- room tools ----
 
 type joinIn struct {
-	Room     string   `json:"room,omitempty" jsonschema:"room name; omit for repo:<current directory>"`
-	Label    string   `json:"label,omitempty" jsonschema:"short human label for this session"`
-	Tags     []string `json:"tags,omitempty" jsonschema:"tags used by tag: selectors"`
-	Autonomy int      `json:"autonomy,omitempty" jsonschema:"0 notify, 1 hold, 2 wake"`
+	Room       string   `json:"room,omitempty" jsonschema:"room name; omit for repo:<current directory>"`
+	Label      string   `json:"label,omitempty" jsonschema:"short human label for this session"`
+	Tags       []string `json:"tags,omitempty" jsonschema:"tags used by tag: selectors"`
+	Autonomy   int      `json:"autonomy,omitempty" jsonschema:"0 notify, 1 hold, 2 wake"`
+	Harness    string   `json:"harness,omitempty" jsonschema:"harness name; omit to detect from the environment"`
+	HarnessKey string   `json:"harness_key,omitempty" jsonschema:"stable session id from the harness; makes a rejoin update the same session"`
 }
 
 type joinOut struct {
@@ -57,12 +59,34 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in joinIn) (*mcp.CallToolResult, joinOut, error) {
 		sess, err := h.Join(ctx, hub.JoinOptions{
 			Room: in.Room, Label: in.Label, Tags: in.Tags, Autonomy: in.Autonomy,
+			Harness: in.Harness, HarnessKey: in.HarnessKey,
 		})
 		if err != nil {
 			return nil, joinOut{}, err
 		}
 		return text(fmt.Sprintf("joined %s as %s", sess.Room, sess.ID)),
 			joinOut{SessionID: sess.ID, Room: sess.Room, Autonomy: sess.Autonomy}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "room_set_autonomy_cap",
+		Description: "Operator control: set the highest autonomy any session may reach in " +
+			"a room. Lowering it quiets the whole room without touching each session. " +
+			"Sessions already running keep their current level until they rejoin.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in capIn) (*mcp.CallToolResult, capOut, error) {
+		room := in.Room
+		if room == "" && in.SessionID != "" {
+			room = h.RoomOf(ctx, in.SessionID)
+		}
+		if room == "" {
+			room = hub.RepoRoom("")
+		}
+		cap, err := h.SetRoomAutonomyCap(ctx, room, in.Autonomy)
+		if err != nil {
+			return nil, capOut{}, err
+		}
+		return text(fmt.Sprintf("autonomy cap for %s is now %d", room, cap)),
+			capOut{Room: room, Autonomy: cap}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -109,6 +133,17 @@ type whoIn struct {
 type whoOut struct {
 	Room     string        `json:"room"`
 	Sessions []hub.Session `json:"sessions"`
+}
+
+type capIn struct {
+	SessionID string `json:"session_id,omitempty" jsonschema:"your session id; used to find your room"`
+	Room      string `json:"room,omitempty" jsonschema:"room name; overrides the session room"`
+	Autonomy  int    `json:"autonomy" jsonschema:"highest autonomy allowed: 0 notify, 1 hold, 2 wake"`
+}
+
+type capOut struct {
+	Room     string `json:"room"`
+	Autonomy int    `json:"autonomy"`
 }
 
 type emptyOut struct{}
@@ -209,6 +244,12 @@ type claimIn struct {
 	Mode      string `json:"mode,omitempty" jsonschema:"exclusive (default) or shared"`
 }
 
+type renewIn struct {
+	SessionID string `json:"session_id" jsonschema:"your session id"`
+	Path      string `json:"path" jsonschema:"path you already hold"`
+	TTL       int64  `json:"ttl_s,omitempty" jsonschema:"seconds the lease stays valid from now; default 1800"`
+}
+
 type releaseIn struct {
 	SessionID string `json:"session_id" jsonschema:"your session id"`
 	Path      string `json:"path" jsonschema:"path to release"`
@@ -243,6 +284,19 @@ func registerLeaseTools(s *mcp.Server, h *hub.Hub) {
 			return text(fmt.Sprintf("denied: %s holds %s", res.Holder.Owner, res.Holder.Path)), *res, nil
 		}
 		return text("granted: " + res.Holder.Path), *res, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "lease_renew",
+		Description: "Extend a lease you already hold. Use it when an edit outlives the " +
+			"TTL. It never takes a path you do not hold, so a stale agent cannot " +
+			"re-acquire a file someone else has since claimed.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in renewIn) (*mcp.CallToolResult, hub.Lease, error) {
+		lease, err := h.Renew(ctx, in.SessionID, in.Path, in.TTL)
+		if err != nil {
+			return nil, hub.Lease{}, err
+		}
+		return text("renewed: " + lease.Path), *lease, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
