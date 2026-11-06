@@ -177,7 +177,31 @@ func outputFor(harness, event string, autonomy int, line string) string {
 		return ""
 
 	case "codex":
-		return line
+		// Codex only reads plain stdout as additionalContext on
+		// SessionStart, SubagentStart and UserPromptSubmit. Stop requires the
+		// JSON envelope; plain text there is ignored.
+		switch event {
+		case "Stop":
+			if autonomy >= hub.AutonomyHold {
+				return jsonString(map[string]any{"decision": "block", "reason": line})
+			}
+			return ""
+		case "UserPromptSubmit":
+			return jsonString(map[string]any{
+				"hookSpecificOutput": map[string]any{
+					"hookEventName":     "UserPromptSubmit",
+					"additionalContext": line,
+				},
+			})
+		case "PostToolUse", "PreToolUse":
+			return jsonString(map[string]any{
+				"hookSpecificOutput": map[string]any{
+					"hookEventName":     event,
+					"additionalContext": line,
+				},
+			})
+		}
+		return ""
 
 	default: // claude-code
 		switch event {

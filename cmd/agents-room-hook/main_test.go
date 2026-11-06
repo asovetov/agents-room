@@ -22,7 +22,10 @@ func TestNormalizeEvent(t *testing.T) {
 		{"hermes", "pre_verify", eventNudge},
 		{"hermes", "post_tool_call", ""},
 		{"codex", "SessionStart", eventJoin},
+		{"codex", "SessionEnd", eventLeave},
 		{"codex", "Stop", eventNudge},
+		{"codex", "UserPromptSubmit", eventNudge},
+		{"codex", "PostToolUse", eventNudge},
 	}
 	for _, c := range cases {
 		if got := normalizeEvent(c.harness, c.event); got != c.want {
@@ -99,10 +102,39 @@ func TestHermesOutputs(t *testing.T) {
 	}
 }
 
-func TestCodexOutputIsPlainText(t *testing.T) {
+func TestCodexOutputContract(t *testing.T) {
 	line := "[agents-room] 1 unread; call msg_recv"
-	if got := outputFor("codex", "Stop", hub.AutonomyNotify, line); got != line {
-		t.Fatalf("codex output = %q, want the bare line", got)
+
+	// Codex ignores plain stdout on Stop, so a nudge at notify level must be
+	// silent rather than a line nobody reads.
+	if got := outputFor("codex", "Stop", hub.AutonomyNotify, line); got != "" {
+		t.Fatalf("codex Stop at notify produced %q, want silence", got)
+	}
+
+	var stop map[string]any
+	if err := json.Unmarshal([]byte(outputFor("codex", "Stop", hub.AutonomyHold, line)), &stop); err != nil {
+		t.Fatalf("codex Stop output is not JSON: %v", err)
+	}
+	if stop["decision"] != "block" || stop["reason"] != line {
+		t.Fatalf("codex Stop = %v, want decision block with the line", stop)
+	}
+
+	// UserPromptSubmit and the tool events use the JSON envelope, not plain
+	// text: Codex ignores plain stdout there.
+	for _, event := range []string{"UserPromptSubmit", "PostToolUse", "PreToolUse"} {
+		var out struct {
+			HookSpecific struct {
+				EventName string `json:"hookEventName"`
+				Context   string `json:"additionalContext"`
+			} `json:"hookSpecificOutput"`
+		}
+		raw := outputFor("codex", event, hub.AutonomyNotify, line)
+		if err := json.Unmarshal([]byte(raw), &out); err != nil {
+			t.Fatalf("codex %s output is not JSON: %q", event, raw)
+		}
+		if out.HookSpecific.EventName != event || out.HookSpecific.Context != line {
+			t.Fatalf("codex %s = %+v", event, out.HookSpecific)
+		}
 	}
 }
 

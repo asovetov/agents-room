@@ -242,7 +242,7 @@ continuations).
 | M3 Claude Code wake adapter | done, verified against a live inbox socket |
 | M4 drift and `file:`/`tag:` selectors | done, tested |
 | M5 `watch` view | done, polling |
-| M6 Codex and Hermes adapters | Hermes has a dedicated adapter, verified against its hook contract; Codex uses the generic hook output |
+| M6 Codex and Hermes adapters | both have dedicated adapters built against their source contracts; Hermes verified live, Codex verified by contract only |
 | M6.5 renew, prune, autonomy cap | done, tested |
 | M7 release packaging | cross-builds for six targets, a tag workflow publishing checksums, and `make install` |
 

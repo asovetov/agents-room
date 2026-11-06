@@ -36,8 +36,9 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
 
 ## Open
 
-1. A dedicated Codex wake adapter. Codex uses the generic hook output today;
-   its own hook contract has not been verified against a live install.
+1. A live Codex check. The adapter follows the Codex source contract
+   (Stop needs the JSON envelope, tool events need it too) but Codex is not
+   installed on the author's machine, so it has not been run end to end.
 2. Whether `hold` should have a per-turn cap lower than the harness default.
 3. Release packaging: the tag workflow and `make install` exist; checksums
    are unsigned (no GPG key yet).

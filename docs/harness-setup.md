@@ -90,15 +90,74 @@ session instead of creating five.
 
 ## Codex CLI
 
-Codex has `SessionStart`, `PostToolUse`, `Stop` and `PreCompact` hooks. Use
-the same hook binary with `--harness=codex`; it falls back to stdout JSON for
-`PostToolBatch` and `Stop` because Codex has no inbox socket.
+Codex hooks are stable and enabled by default since 0.124.0. Configure them
+in `~/.codex/config.toml` or in `<project>/.codex/config.toml` (trusted
+projects only):
+
+```toml
+[[hooks.SessionStart]]
+[[hooks.SessionStart.hooks]]
+type = "command"
+command = "agents-room-hook --harness=codex --event=SessionStart"
+timeout = 15
+
+[[hooks.SessionEnd]]
+[[hooks.SessionEnd.hooks]]
+type = "command"
+command = "agents-room-hook --harness=codex --event=SessionEnd"
+timeout = 3
+
+[[hooks.UserPromptSubmit]]
+[[hooks.UserPromptSubmit.hooks]]
+type = "command"
+command = "agents-room-hook --harness=codex --event=UserPromptSubmit"
+timeout = 10
+
+[[hooks.PostToolUse]]
+[[hooks.PostToolUse.hooks]]
+type = "command"
+command = "agents-room-hook --harness=codex --event=PostToolUse"
+timeout = 10
+
+[[hooks.Stop]]
+[[hooks.Stop.hooks]]
+type = "command"
+command = "agents-room-hook --harness=codex --event=Stop"
+timeout = 30
+```
+
+| Event | Output | Effect |
+|---|---|---|
+| `SessionStart` | none | joins the room |
+| `SessionEnd` | none | leaves the room and releases leases |
+| `UserPromptSubmit` | JSON with `hookSpecificOutput.additionalContext` | adds the nudge to the turn |
+| `PostToolUse` | same envelope | adds the nudge after a tool |
+| `Stop` | `{"decision":"block","reason":"..."}` | holds the end of a turn, only at `hold` or above |
+
+Plain stdout is only read as context on `SessionStart`, `SubagentStart` and
+`UserPromptSubmit`; the tool events and `Stop` need the JSON envelope, which
+is why the hook emits JSON for Codex rather than a bare line.
+
+Two caveats that cost time if missed:
+
+- Codex records a trust hash per hook and **will not run an untrusted or
+  edited hook**. Approve it once with the `/hooks` command. `--dangerously-bypass-hook-trust`
+  skips the check.
+- On Windows the default hook shell is `cmd.exe`, not bash. The hook binary
+  is a native executable so the command above works, but any shell syntax
+  around it would need `commandWindows`.
+
+MCP server registration:
 
 ```toml
 # ~/.codex/config.toml
 [mcp_servers.agents-room]
 command = "agents-room-mcp"
 ```
+
+Codex has no cross-session message bus of its own (`codex queue` writes into
+one session's input queue but has no reply channel or discovery), so the
+room is the only cross-session path there.
 
 ## Hermes
 
