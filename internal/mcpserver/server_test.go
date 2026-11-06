@@ -232,6 +232,28 @@ func TestToolCallsUpdateLastSeen(t *testing.T) {
 	}
 }
 
+// A harness-spawned MCP server inherits the harness session id. room_join
+// must use it when the model omits harness_key, or a chat that joins twice
+// appears as two agents with one pid.
+func TestJoinWithoutKeyReusesHarnessSession(t *testing.T) {
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "harness-chat-1")
+	cs, h := connect(t)
+
+	first := call(t, cs, "room_join", map[string]any{"room": "repo:x"})
+	second := call(t, cs, "room_join", map[string]any{"room": "repo:x"})
+	if first["session_id"] != second["session_id"] {
+		t.Fatalf("two joins made two sessions: %v then %v", first["session_id"], second["session_id"])
+	}
+
+	who, err := h.Who(context.Background(), "repo:x")
+	if err != nil {
+		t.Fatalf("who: %v", err)
+	}
+	if len(who) != 1 {
+		t.Fatalf("who returned %d sessions, want 1", len(who))
+	}
+}
+
 // A send that reaches nobody must say so in its output instead of looking
 // like a delivery.
 func TestSendReportsRecipientCount(t *testing.T) {

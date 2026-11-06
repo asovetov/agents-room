@@ -88,10 +88,18 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 			"join shared rooms, which is how an agent in one repository reaches an " +
 			"agent in another.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in joinIn) (*mcp.CallToolResult, joinOut, error) {
+		// The server is spawned by the harness, so it inherits the harness's
+		// own session id. Using it when the model omits harness_key keeps a
+		// chat that calls room_join twice from becoming two sessions, which
+		// is exactly what happened before.
+		key := in.HarnessKey
+		if key == "" {
+			key = hub.HarnessKeyFromEnv()
+		}
 		sess, err := h.Join(ctx, hub.JoinOptions{
 			Room: in.Room, ExtraRooms: in.ExtraRooms, Label: in.Label,
 			Tags: in.Tags, Autonomy: in.Autonomy,
-			Harness: in.Harness, HarnessKey: in.HarnessKey,
+			Harness: in.Harness, HarnessKey: key,
 		})
 		if err != nil {
 			return nil, joinOut{}, err
