@@ -139,7 +139,16 @@ configuration is migrated in the same step, because a renamed command left
 in place would make hooks fail silently.
 
 `agents-room doctor` reports the store, the schema version, which harness
-configs are wired up, and whether an old command name is still around.
+configs are wired up, whether an old command name is still around, a room
+split by an old prefix bug, one chat registered under several ids, and a
+lease about to lapse.
+
+`agents-room doctor --fix` applies the repairs it can decide alone, which is
+collapsing a chat that registered more than once. It keeps the session that
+carries the harness key, or the oldest one when none does, and removes the
+rest. `--fix --dry-run` prints the plan without touching the store. A split
+room is reported but never merged automatically: moving a session between
+rooms is the session's decision, not doctor's.
 
 ## Status
 

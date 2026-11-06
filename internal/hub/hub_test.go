@@ -730,3 +730,83 @@ func TestJoinWarnsAboutAForeignHarnessKey(t *testing.T) {
 		t.Fatalf("a harness with no session id in the environment warned: %q", none.Warning)
 	}
 }
+
+// The rule a person applies by hand: keep the session the harness keeps
+// rejoining, because that is the one whose id survives.
+func TestPlanDuplicateFixKeepsTheHarnessKey(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	keyed, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "k", PID: 4242,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// An older row on the same pid, the way the old room_join left one.
+	if _, err := h.db.SQL().ExecContext(ctx, `
+		INSERT INTO sessions (id, room_id, harness, cwd, pid, label, tags, autonomy,
+		                      joined_at, last_seen, harness_key)
+		SELECT 'older', room_id, harness, cwd, pid, label, tags, autonomy,
+		       joined_at - 100, last_seen, '' FROM sessions WHERE id = ?`, keyed.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SQL().ExecContext(ctx, `
+		INSERT INTO session_rooms (session_id, room_id, joined_at)
+		SELECT 'older', room_id, joined_at FROM session_rooms WHERE session_id = ?`, keyed.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := h.PlanDuplicateFix(ctx)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(plan) != 1 {
+		t.Fatalf("plan has %d fixes, want 1", len(plan))
+	}
+	if plan[0].Keep != keyed.ID {
+		t.Fatalf("keep = %q, want the keyed session %q", plan[0].Keep, keyed.ID)
+	}
+	if len(plan[0].Remove) != 1 || plan[0].Remove[0] != "older" {
+		t.Fatalf("remove = %v, want [older]", plan[0].Remove)
+	}
+
+	// Planning must not change anything.
+	if _, err := h.sessionByHarnessKey(ctx, "claude-code", "k"); err != nil {
+		t.Fatalf("planning removed the keyed session: %v", err)
+	}
+	var n int
+	if err := h.db.SQL().QueryRowContext(ctx, `SELECT COUNT(*) FROM sessions WHERE id = 'older'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("planning removed a session")
+	}
+}
+
+// With no key anywhere, the oldest row survives: it has been in the room
+// longest, and other agents already have its id.
+func TestPlanDuplicateFixKeepsTheOldestWithoutKeys(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	first, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "test", PID: 4242})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SQL().ExecContext(ctx, `
+		INSERT INTO sessions (id, room_id, harness, cwd, pid, label, tags, autonomy,
+		                      joined_at, last_seen, harness_key)
+		SELECT 'newer', room_id, harness, cwd, pid, label, tags, autonomy,
+		       joined_at + 100, last_seen, '' FROM sessions WHERE id = ?`, first.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := h.PlanDuplicateFix(ctx)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(plan) != 1 || plan[0].Keep != first.ID {
+		t.Fatalf("plan = %+v, want to keep the older %q", plan, first.ID)
+	}
+}
