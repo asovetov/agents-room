@@ -227,6 +227,22 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 				"Update, rejoin with `--key`, then leave the extras",
 				dup.PID, len(dup.IDs), strings.Join(dup.IDs, ", "))
 		}
+		// A lease that lapses under a session that is still working is the
+		// case the TTL is meant to prevent, and nothing else can see it
+		// coming. The hook renews on every tool event, so a warning here
+		// usually means the harness is not calling that hook.
+		for _, s := range sessions {
+			expiring, err := h.ExpiringLeases(ctx, s.ID, 0.25)
+			if err != nil {
+				continue
+			}
+			now := time.Now().Unix()
+			for _, l := range expiring {
+				line(false, "%s holds %s but its lease ends in %s; the hook renews leases on every tool event, "+
+					"so this session is probably not running it",
+					sessionName(s), l.Path, humanUntil(l.ExpiresAt, now))
+			}
+		}
 	}
 
 	fmt.Fprintln(stdout, "\nHarness configuration")
@@ -272,6 +288,25 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	fmt.Fprintf(stdout, "%d problem(s) found\n", problems)
 	return 1
+}
+
+// sessionName is what a human calls a session: its label when it has one,
+// its id otherwise.
+func sessionName(s hub.Session) string {
+	if s.Label != "" {
+		return s.Label
+	}
+	return s.ID
+}
+
+// humanUntil renders the time left before a unix timestamp, rounded to the
+// minute, for a report a person reads.
+func humanUntil(expiresAt, now int64) string {
+	left := time.Duration(expiresAt-now) * time.Second
+	if left < time.Minute {
+		return "less than a minute"
+	}
+	return left.Round(time.Minute).String()
 }
 
 // splitSharedRoom is one unprefixed room that duplicates a shared one.

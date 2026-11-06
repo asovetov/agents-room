@@ -164,6 +164,14 @@ agent cannot re-acquire a file someone else has since claimed. An expired lease 
 by every read and removed by the next claim, so a crashed session cannot hold
 a file forever. `room_leave` releases everything the session held.
 
+A lease is meant to cover the edit it guards, and an edit can outlast the
+TTL. The hook renews every lease its session holds on each tool event, so a
+session that is doing anything keeps them without naming each path, and one
+that stops working loses them after the same half hour as before. A lapsed
+lease is never taken back by renewal: someone else may hold the path by now.
+`doctor` warns when a live lease has less than a quarter of its life left,
+which usually means the harness is not calling the hook.
+
 ## Drift
 
 `note_read` stores the SHA-256 of a file at the moment a session read it.

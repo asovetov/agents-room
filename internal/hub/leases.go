@@ -199,6 +199,74 @@ func (h *Hub) Renew(ctx context.Context, sessionID, path string, ttlSeconds int6
 	return h.leaseFor(ctx, roomID, path, sessionID)
 }
 
+// RenewAll extends every live lease a session holds and reports how many it
+// touched.
+//
+// A lease is meant to cover the edit it guards, and an edit can outlast the
+// TTL. Without this the only ways to keep a lease were to renew each path by
+// name, which needs the agent to remember them, or to let it expire under a
+// session that is still working. The hook calls this on every tool event, so
+// a session that is doing anything at all keeps what it holds.
+//
+// It renews rather than re-acquires: a lease this session lost to expiry is
+// not taken back, because someone else may hold it by now.
+func (h *Hub) RenewAll(ctx context.Context, sessionID string, ttlSeconds int64) (int, error) {
+	if ttlSeconds <= 0 {
+		ttlSeconds = 1800
+	}
+	now := h.now()
+	res, err := h.db.SQL().ExecContext(ctx, `
+		UPDATE leases SET expires_at = ?
+		WHERE owner = ? AND expires_at > ?`,
+		now+ttlSeconds, sessionID, now)
+	if err != nil {
+		return 0, fmt.Errorf("renew all: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("renew all: %w", err)
+	}
+	return int(n), nil
+}
+
+// ExpiringLeases reports the live leases of a session that have less than
+// the given fraction of their original lifetime left.
+//
+// It exists for doctor: a lease that is about to lapse under a session that
+// is still editing is the case the TTL was supposed to prevent, and nothing
+// else can see it coming.
+func (h *Hub) ExpiringLeases(ctx context.Context, sessionID string, fraction float64) ([]Lease, error) {
+	roomID, err := h.sessionRoom(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("expiring leases: %w", err)
+	}
+	now := h.now()
+	rows, err := h.db.SQL().QueryContext(ctx, `
+		SELECT l.path, l.owner, l.mode, l.acquired_at, l.expires_at,
+		       COALESCE(s.label, ''), COALESCE(r.name, '')
+		FROM leases l
+		LEFT JOIN sessions s ON s.id = l.owner
+		LEFT JOIN rooms r ON r.id = l.room_id
+		WHERE l.room_id = ? AND l.owner = ? AND l.expires_at > ?
+		  AND (l.expires_at - ?) < (? - l.acquired_at) * ?
+		ORDER BY l.expires_at`, roomID, sessionID, now, now, now, fraction)
+	if err != nil {
+		return nil, fmt.Errorf("expiring leases: query: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Lease{}
+	for rows.Next() {
+		var l Lease
+		if err := rows.Scan(&l.Path, &l.Owner, &l.Mode, &l.AcquiredAt,
+			&l.ExpiresAt, &l.OwnerLabel, &l.Room); err != nil {
+			return nil, fmt.Errorf("expiring leases: scan: %w", err)
+		}
+		out = append(out, l)
+	}
+	return out, rows.Err()
+}
+
 // Release drops every lease a session holds on path.
 func (h *Hub) Release(ctx context.Context, sessionID, path string) error {
 	path, err := normalizePath(path)

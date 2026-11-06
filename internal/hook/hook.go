@@ -52,13 +52,18 @@ func Run(args []string) int {
 }
 
 func run(harness, event, room string, autonomy int) int {
+	return runWithInput(harness, event, room, autonomy, readInput())
+}
+
+// runWithInput is run over an already-decoded payload, so a test can drive a
+// whole event without replacing the process's stdin.
+func runWithInput(harness, event, room string, autonomy int, in hookInput) int {
 	flagRoom := room
 	// Hooks have small time budgets: 30 seconds on UserPromptSubmit, 1.5
 	// seconds shared on SessionEnd. Stay well inside the smallest one.
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
 	defer cancel()
 
-	in := readInput()
 	if in.Cwd == "" {
 		in.Cwd, _ = os.Getwd()
 	}
@@ -110,10 +115,23 @@ func run(harness, event, room string, autonomy int) int {
 		return 0
 
 	case eventNudge:
+		// Every tool event is proof that the session is still working, which
+		// is exactly when its leases must not lapse. A session that does
+		// nothing at all is the one that should lose them.
+		if s, err := h.FindSession(ctx, roomName, harness, in.SessionID); err == nil && s != nil {
+			_, _ = h.RenewAll(ctx, s.ID, leaseTTL)
+		}
 		return nudge(ctx, h, harness, roomName, in.SessionID, event, in.StopHookActive)
 	}
 	return 0
 }
+
+// leaseTTL is the lifetime given to a lease on renewal.
+//
+// It matches the hub default, so a session that keeps working keeps its
+// lease for as long as it keeps working, and a session that stops loses it
+// after the same half hour as before.
+const leaseTTL = 1800
 
 // Event kinds the hook reacts to.
 const (
