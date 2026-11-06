@@ -141,10 +141,15 @@ func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event
 		return 0
 	}
 
-	// A hook posting to its own session's socket counts as an own-child
-	// message, which Claude Code auto-delivers without approval, and it
-	// wakes an idle session.
-	if harness == "claude-code" {
+	// Posting to the session's own inbox socket is the only lever that
+	// starts a turn in an idle session, so it belongs to the wake level.
+	// At notify and hold the signal rides the current turn instead; doing
+	// both would wake the agent at level 0, which the operator asked not to
+	// happen.
+	//
+	// The post counts as an own-child message, so Claude Code auto-delivers
+	// it without an approval prompt.
+	if harness == "claude-code" && self.Autonomy >= hub.AutonomyWake {
 		if path := wake.SocketPath(); path != "" {
 			if err := wake.PostToSocket(path, wake.SocketToken(), res.Line); err == nil {
 				h.MarkOffered(ctx, self.ID, hub.StateAccepted)
@@ -154,7 +159,9 @@ func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event
 	}
 	h.MarkOffered(ctx, self.ID, hub.StateOffered)
 
-	fmt.Fprintln(os.Stdout, outputFor(harness, event, self.Autonomy, res.Line))
+	if out := outputFor(harness, event, self.Autonomy, res.Line); out != "" {
+		fmt.Fprintln(os.Stdout, out)
+	}
 	return 0
 }
 
