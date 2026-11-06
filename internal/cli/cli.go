@@ -54,6 +54,12 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runMCP(stdout, stderr)
 	case "hook":
 		return hook.Run(rest)
+	case "update":
+		return runUpdate(ctx, rest, stdout, stderr)
+	case "migrate-config":
+		return runMigrateConfig(rest, stdout, stderr)
+	case "doctor":
+		return runDoctor(ctx, rest, stdout, stderr)
 	case "path":
 		return runPath(stdout, stderr)
 	case "version":
@@ -90,6 +96,9 @@ Usage:
   agents-room mcp                        serve the room over MCP on stdio
   agents-room hook  --harness H --event E [--autonomy N] [--room NAME]
                                          run one harness hook event
+  agents-room update [--check] [--yes]   check GitHub for a newer release
+  agents-room migrate-config [--dry-run] rewrite old command names in harness configs
+  agents-room doctor                     report what is installed and wired up
   agents-room path
 
 Selectors for --to: * | <session-id> | file:<glob> | tag:<tag>

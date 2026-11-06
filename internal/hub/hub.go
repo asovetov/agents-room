@@ -53,6 +53,11 @@ func (h *Hub) Close() error { return h.db.Close() }
 // Path returns the database file path.
 func (h *Hub) Path() string { return h.db.Path() }
 
+// SchemaVersion reports the applied migration number.
+func (h *Hub) SchemaVersion(ctx context.Context) (int, error) {
+	return h.db.SchemaVersion(ctx)
+}
+
 // Session is a connected agent process.
 //
 // A session can be in several rooms at once: its repository room and any
