@@ -54,6 +54,11 @@ clean:
 # that exists only on one platform, a syscall wrapped behind the wrong
 # //go:build line. Two bugs in 0.5.x failed only on the Windows runner, and
 # both would have been caught here in seconds.
+#
+# It does not catch a test that compiles everywhere and asserts the wrong
+# thing on one platform, such as comparing a stored absolute path with a
+# relative one. Only the Windows runner executes those, so a red job there is
+# still the signal to trust.
 crosscheck:
 	@for target in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64; do \
 		os=$${target%/*}; arch=$${target#*/}; \
