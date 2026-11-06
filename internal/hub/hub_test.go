@@ -598,3 +598,95 @@ func TestFindSession(t *testing.T) {
 		t.Fatalf("found %+v for an unknown key, want nil", missing)
 	}
 }
+
+// A lease is meant to cover the edit it guards, and an edit can outlast the
+// TTL. RenewAll is what the hook calls on every tool event, so a session that
+// is doing anything keeps what it holds without naming each path.
+func TestRenewAllExtendsEveryLiveLease(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	for _, p := range []string{"src/a.go", "src/b.go"} {
+		if r, _ := h.Claim(ctx, a.ID, p, 60, ModeExclusive); !r.OK {
+			t.Fatalf("claim %s failed", p)
+		}
+	}
+	// Another session's lease must not be touched.
+	if r, _ := h.Claim(ctx, b.ID, "src/c.go", 60, ModeExclusive); !r.OK {
+		t.Fatal("claim c failed")
+	}
+
+	// List returns the whole room, so pick this session's leases by owner.
+	owned := func(sessionID string) map[string]int64 {
+		t.Helper()
+		all, err := h.List(ctx, sessionID)
+		if err != nil {
+			t.Fatalf("list: %v", err)
+		}
+		out := map[string]int64{}
+		for _, l := range all {
+			if l.Owner == sessionID {
+				out[l.Path] = l.ExpiresAt
+			}
+		}
+		return out
+	}
+
+	beforeA := owned(a.ID)
+	beforeB := owned(b.ID)
+	if len(beforeA) != 2 || len(beforeB) != 1 {
+		t.Fatalf("before: a holds %d, b holds %d", len(beforeA), len(beforeB))
+	}
+
+	n, err := h.RenewAll(ctx, a.ID, 3600)
+	if err != nil {
+		t.Fatalf("renew all: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("renewed %d leases, want 2", n)
+	}
+
+	afterA := owned(a.ID)
+	afterB := owned(b.ID)
+	for path, was := range beforeA {
+		if afterA[path] <= was {
+			t.Fatalf("%s: expiry did not move (%d -> %d)", path, was, afterA[path])
+		}
+	}
+	if afterB["src/c.go"] != beforeB["src/c.go"] {
+		t.Fatal("RenewAll extended another session's lease")
+	}
+}
+
+// A lease that already lapsed is not taken back: someone else may hold the
+// path by now, and renewing a dead claim would steal it.
+func TestRenewAllDoesNotReviveAnExpiredLease(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	if r, _ := h.Claim(ctx, a.ID, "src/x.go", 1, ModeExclusive); !r.OK {
+		t.Fatal("claim failed")
+	}
+	old := h.now
+	t.Cleanup(func() { h.setClock(old) })
+	h.setClock(func() int64 { return old() + 3600 })
+
+	if r, _ := h.Claim(ctx, b.ID, "src/x.go", 600, ModeExclusive); !r.OK {
+		t.Fatal("b could not take the lapsed path")
+	}
+	n, err := h.RenewAll(ctx, a.ID, 600)
+	if err != nil {
+		t.Fatalf("renew all: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("renewed %d lapsed leases, want 0", n)
+	}
+	holder, err := h.Check(ctx, b.ID, "src/x.go")
+	if err != nil || holder == nil || holder.Owner != b.ID {
+		t.Fatalf("holder = %+v (%v), want b", holder, err)
+	}
+}

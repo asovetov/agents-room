@@ -249,3 +249,51 @@ func TestClaudeCodeNotifyNeverBlocksOrWakes(t *testing.T) {
 		}
 	}
 }
+
+// A session that is doing anything at all keeps its leases: the hook renews
+// them on every tool event, so an edit cannot outlive the TTL that guards it.
+func TestToolEventRenewsTheSessionsLeases(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "room.db")
+	h, err := hub.OpenPath(dbPath)
+	if err != nil {
+		t.Fatalf("open hub: %v", err)
+	}
+	self, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "k",
+		Autonomy: hub.AutonomyNotify,
+	})
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if r, _ := h.Claim(ctx, self.ID, "src/x.go", 60, hub.ModeExclusive); !r.OK {
+		t.Fatal("claim failed")
+	}
+	before, err := h.Check(ctx, self.ID, "src/x.go")
+	if err != nil || before == nil {
+		t.Fatalf("check: %v", err)
+	}
+	h.Close()
+
+	// The hook opens the store itself, so point it at the same file.
+	t.Setenv("AGENTS_ROOM_DB", dbPath)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	if code := runWithInput("claude-code", "PostToolBatch", "repo:x", hub.AutonomyNotify,
+		hookInput{SessionID: "k", Cwd: t.TempDir()}); code != 0 {
+		t.Fatalf("hook exit %d", code)
+	}
+
+	h2, err := hub.OpenPath(dbPath)
+	if err != nil {
+		t.Fatalf("reopen hub: %v", err)
+	}
+	defer h2.Close()
+	after, err := h2.Check(ctx, self.ID, "src/x.go")
+	if err != nil || after == nil {
+		t.Fatalf("check after: %v", err)
+	}
+	if after.ExpiresAt <= before.ExpiresAt {
+		t.Fatalf("lease expiry did not move (%d -> %d); the tool event did not renew it",
+			before.ExpiresAt, after.ExpiresAt)
+	}
+}

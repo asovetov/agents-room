@@ -8,7 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/asovetov/agents-room/internal/hub"
 	"github.com/asovetov/agents-room/internal/store"
 )
 
@@ -278,4 +280,45 @@ func TestDoctorReportsDuplicatePID(t *testing.T) {
 // writeFile is a small helper so the drift test does not import os twice.
 func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)
+}
+
+// A lease that lapses under a session that is still working is the case the
+// TTL is meant to prevent. doctor has to say so, because nothing else can see
+// it coming, and the usual cause is that the harness is not calling the hook.
+func TestDoctorReportsExpiringLease(t *testing.T) {
+	run := setup(t)
+	// doctor reads the current repository room, so the session joins that
+	// one rather than a made-up name.
+	room := hub.RepoRoom("")
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	_, out, _ := run("join", "--room", room, "--key", "a")
+	id := strings.TrimSpace(out)
+	run("lease", "claim", "--session", id, "--path", "src/x.go", "--ttl", "100")
+
+	// With most of the TTL left there is nothing to report yet.
+	_, clean, _ := run("doctor")
+	if strings.Contains(clean, "lease ends in") {
+		t.Fatalf("doctor warned about a lease with most of its life left:\n%s", clean)
+	}
+
+	// Move the expiry close to now, the way a long edit would leave it, and
+	// doctor must name it.
+	db, err := store.Open(os.Getenv("AGENTS_ROOM_DB"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.SQL().ExecContext(context.Background(),
+		`UPDATE leases SET acquired_at = ?, expires_at = ?`,
+		time.Now().Add(-10*time.Minute).Unix(), time.Now().Add(60*time.Second).Unix()); err != nil {
+		t.Fatalf("age the lease: %v", err)
+	}
+
+	_, aged, _ := run("doctor")
+	if !strings.Contains(aged, "lease ends in") {
+		t.Fatalf("doctor did not report a lease about to lapse:\n%s", aged)
+	}
+	if !strings.Contains(aged, "src/x.go") {
+		t.Fatalf("doctor named the warning but not the path:\n%s", aged)
+	}
 }

@@ -97,6 +97,11 @@ session instead of creating five.
 - `--autonomy=2`: as level 1, and an idle session is woken. Good when you are
   away and the agents are on their own.
 
+Every nudge event also renews the leases the session holds. A session that is
+running tools keeps what it claimed; one that stops working lets them lapse
+after the TTL. `agents-room doctor` warns when a live lease has less than a
+quarter of its life left, which is the sign that this hook is not running.
+
 ## Codex CLI
 
 Codex hooks are stable and enabled by default since 0.124.0. Configure them
