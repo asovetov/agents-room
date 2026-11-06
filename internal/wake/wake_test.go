@@ -15,6 +15,19 @@ import (
 	"github.com/asovetov/agents-room/internal/hub"
 )
 
+// shortSocketDir returns a directory short enough for a Unix socket path.
+// macOS limits a socket path to about 104 bytes and t.TempDir() there is
+// already longer than that.
+func shortSocketDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "ar")
+	if err != nil {
+		t.Skipf("short temp dir unavailable: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	return dir
+}
+
 func TestNudgeLineCarriesNoBody(t *testing.T) {
 	line := Nudge("repo:gcs", 3)
 	if !strings.Contains(line, "3 unread") || !strings.Contains(line, "repo:gcs") {
@@ -68,8 +81,7 @@ func TestCheckCountsAndTouches(t *testing.T) {
 // TestPostToSocketDelivers builds a real Unix socket that speaks the Claude
 // Code inbox protocol and checks the exact bytes the hook sends.
 func TestPostToSocketDelivers(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "inbox.sock")
+	path := filepath.Join(shortSocketDir(t), "inbox.sock")
 
 	ln, err := net.Listen("unix", path)
 	if err != nil {
@@ -128,7 +140,7 @@ func TestPostToSocketDelivers(t *testing.T) {
 }
 
 func TestPostToSocketOmitsAuthWhenNoToken(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "inbox.sock")
+	path := filepath.Join(shortSocketDir(t), "inbox.sock")
 	ln, err := net.Listen("unix", path)
 	if err != nil {
 		t.Fatal(err)
