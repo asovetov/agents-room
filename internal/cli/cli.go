@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -69,8 +70,8 @@ func usage(w io.Writer) {
 	fmt.Fprint(w, `agents-room coordinates AI coding agents working in the same codebase.
 
 Usage:
-  agents-room join   [--room NAME] [--label TEXT] [--tag T]... [--autonomy 0|1|2] [--key K]
-  agents-room leave  --session ID
+  agents-room join   [--room NAME] [--also SHARED]... [--label TEXT] [--tag T]... [--autonomy 0|1|2] [--key K]
+  agents-room leave  --session ID [--room NAME]
   agents-room who    [--room NAME] [--json]
   agents-room cap    [--room NAME] [--set 0|1|2]
   agents-room send   --session ID --to SELECTOR [--subject TEXT] [--body TEXT] [--ttl SECONDS]
@@ -109,8 +110,9 @@ func runJoin(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	autonomy := fs.Int("autonomy", hub.AutonomyNotify, "0 notify, 1 hold, 2 wake")
 	key := fs.String("key", "", "stable harness session key; a repeat join updates the same session")
 	harness := fs.String("harness", "", "harness name (default: detect from the environment)")
-	var tags stringList
+	var tags, extraRooms stringList
 	fs.Var(&tags, "tag", "tag for addressing (repeatable)")
+	fs.Var(&extraRooms, "also", "additional shared room to join (repeatable)")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -122,8 +124,8 @@ func runJoin(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	defer h.Close()
 
 	s, err := h.Join(ctx, hub.JoinOptions{
-		Room: *room, Label: *label, Tags: tags, Autonomy: *autonomy,
-		HarnessKey: *key, Harness: *harness,
+		Room: *room, ExtraRooms: extraRooms, Label: *label, Tags: tags,
+		Autonomy: *autonomy, HarnessKey: *key, Harness: *harness,
 	})
 	if err != nil {
 		return fail(stderr, err)
@@ -136,6 +138,7 @@ func runLeave(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	fs := flag.NewFlagSet("leave", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	session := fs.String("session", "", "session id")
+	room := fs.String("room", "", "leave only this room; omit to leave every room")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -148,6 +151,13 @@ func runLeave(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return code
 	}
 	defer h.Close()
+
+	if *room != "" {
+		if err := h.LeaveRoom(ctx, *session, *room); err != nil {
+			return fail(stderr, err)
+		}
+		return 0
+	}
 	if err := h.Leave(ctx, *session); err != nil {
 		return fail(stderr, err)
 	}
@@ -187,10 +197,10 @@ func runWho(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "SESSION\tHARNESS\tAUTONOMY\tLABEL\tTAGS")
+	fmt.Fprintln(tw, "SESSION\tHARNESS\tAUTONOMY\tROOMS\tLABEL\tTAGS")
 	for _, s := range sessions {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%v\n",
-			s.ID, s.Harness, s.Autonomy, s.Label, s.Tags)
+		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%v\n",
+			s.ID, s.Harness, s.Autonomy, strings.Join(s.Rooms, ","), s.Label, s.Tags)
 	}
 	if err := tw.Flush(); err != nil {
 		return fail(stderr, err)

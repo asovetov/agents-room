@@ -409,7 +409,7 @@ func TestWhoListsRoomSessions(t *testing.T) {
 		t.Fatalf("who returned %d sessions, want 2", len(got))
 	}
 	for _, s := range got {
-		if strings.HasPrefix(s.Room, "repo:y") {
+		if len(s.Rooms) > 0 && strings.HasPrefix(s.Rooms[0], "repo:y") {
 			t.Fatalf("session from another room leaked: %+v", s)
 		}
 	}

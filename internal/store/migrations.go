@@ -51,6 +51,44 @@ var migrations = []migration{
 			return nil
 		},
 	},
+	{
+		version: 3,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			// A session can be in several rooms: its repository room plus any
+			// number of shared rooms. That is what makes an agent in one
+			// repository able to reach an agent in another, which is the whole
+			// point of a shared room.
+			//
+			// The old sessions.room_id column stays for one release so a
+			// downgrade still reads, but nothing writes it any more. SQLite
+			// cannot drop a column with a foreign key in place on every
+			// supported version, and an unused column costs nothing.
+			stmts := []string{
+				`CREATE TABLE IF NOT EXISTS session_rooms (
+				   session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+				   room_id    TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+				   joined_at  INTEGER NOT NULL,
+				   PRIMARY KEY (session_id, room_id)
+				 )`,
+				`CREATE INDEX IF NOT EXISTS idx_session_rooms_room
+				   ON session_rooms(room_id)`,
+				// Carry every existing membership across, so a store written
+				// before this migration keeps its rooms.
+				`INSERT OR IGNORE INTO session_rooms (session_id, room_id, joined_at)
+				   SELECT id, room_id, joined_at FROM sessions WHERE room_id IS NOT NULL`,
+				// The idempotency key is per harness session, not per room:
+				// rejoining must find the session wherever it already is.
+				`CREATE INDEX IF NOT EXISTS idx_sessions_harness_lookup
+				   ON sessions(harness, harness_key) WHERE harness_key <> ''`,
+			}
+			for _, s := range stmts {
+				if _, err := conn.ExecContext(ctx, s); err != nil {
+					return fmt.Errorf("migration 3: %w", err)
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // migrate applies every step the database has not seen yet.

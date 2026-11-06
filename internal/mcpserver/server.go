@@ -9,6 +9,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -36,7 +37,8 @@ func New(h *hub.Hub) *mcp.Server {
 // ---- room tools ----
 
 type joinIn struct {
-	Room       string   `json:"room,omitempty" jsonschema:"room name; omit for repo:<current directory>"`
+	Room       string   `json:"room,omitempty" jsonschema:"repository room; omit for repo:<current directory>"`
+	ExtraRooms []string `json:"extra_rooms,omitempty" jsonschema:"shared rooms to join as well, e.g. aerobasis"`
 	Label      string   `json:"label,omitempty" jsonschema:"short human label for this session"`
 	Tags       []string `json:"tags,omitempty" jsonschema:"tags used by tag: selectors"`
 	Autonomy   int      `json:"autonomy,omitempty" jsonschema:"0 notify, 1 hold, 2 wake"`
@@ -45,9 +47,9 @@ type joinIn struct {
 }
 
 type joinOut struct {
-	SessionID string `json:"session_id"`
-	Room      string `json:"room"`
-	Autonomy  int    `json:"autonomy"`
+	SessionID string   `json:"session_id"`
+	Rooms     []string `json:"rooms"`
+	Autonomy  int      `json:"autonomy"`
 }
 
 func registerRoomTools(s *mcp.Server, h *hub.Hub) {
@@ -55,17 +57,20 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 		Name: "room_join",
 		Description: "Join a room and get a session id. Call this once at the start. " +
 			"Every other tool takes the returned session_id. The room defaults to " +
-			"repo:<name of the current git repository>.",
+			"repo:<name of the current git repository>. Pass extra_rooms to also " +
+			"join shared rooms, which is how an agent in one repository reaches an " +
+			"agent in another.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in joinIn) (*mcp.CallToolResult, joinOut, error) {
 		sess, err := h.Join(ctx, hub.JoinOptions{
-			Room: in.Room, Label: in.Label, Tags: in.Tags, Autonomy: in.Autonomy,
+			Room: in.Room, ExtraRooms: in.ExtraRooms, Label: in.Label,
+			Tags: in.Tags, Autonomy: in.Autonomy,
 			Harness: in.Harness, HarnessKey: in.HarnessKey,
 		})
 		if err != nil {
 			return nil, joinOut{}, err
 		}
-		return text(fmt.Sprintf("joined %s as %s", sess.Room, sess.ID)),
-			joinOut{SessionID: sess.ID, Room: sess.Room, Autonomy: sess.Autonomy}, nil
+		return text(fmt.Sprintf("joined %s as %s", strings.Join(sess.Rooms, ", "), sess.ID)),
+			joinOut{SessionID: sess.ID, Rooms: sess.Rooms, Autonomy: sess.Autonomy}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -90,13 +95,25 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
-		Name:        "room_leave",
-		Description: "Leave the room and release every lease this session holds.",
+		Name: "room_leave",
+		Description: "Leave every room and release every lease this session holds. " +
+			"To leave one shared room and stay in the rest, use room_leave_room.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sessionIn) (*mcp.CallToolResult, emptyOut, error) {
 		if err := h.Leave(ctx, in.SessionID); err != nil {
 			return nil, emptyOut{}, err
 		}
-		return text("left the room"), emptyOut{}, nil
+		return text("left every room"), emptyOut{}, nil
+	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "room_leave_room",
+		Description: "Leave one room and stay in the others. Leases held in that " +
+			"room are released. Use it when a shared-room contract is settled.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in leaveRoomIn) (*mcp.CallToolResult, emptyOut, error) {
+		if err := h.LeaveRoom(ctx, in.SessionID, in.Room); err != nil {
+			return nil, emptyOut{}, err
+		}
+		return text("left " + in.Room), emptyOut{}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -123,6 +140,11 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 
 type sessionIn struct {
 	SessionID string `json:"session_id" jsonschema:"session id returned by room_join"`
+}
+
+type leaveRoomIn struct {
+	SessionID string `json:"session_id" jsonschema:"your session id"`
+	Room      string `json:"room" jsonschema:"room to leave"`
 }
 
 type whoIn struct {
