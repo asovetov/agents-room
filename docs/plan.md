@@ -244,6 +244,6 @@ continuations).
 | M5 `watch` view | done, polling |
 | M6 Codex and Hermes adapters | Hermes has a dedicated adapter, verified against its hook contract; Codex uses the generic hook output |
 | M6.5 renew, prune, autonomy cap | done, tested |
-| M7 release packaging | cross-builds for six targets; no signed release yet |
+| M7 release packaging | cross-builds for six targets, a tag workflow publishing checksums, and `make install` |
 
 Open items are listed in [`CONTEXT.md`](CONTEXT.md).
