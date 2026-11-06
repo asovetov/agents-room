@@ -40,16 +40,15 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    (Stop needs the JSON envelope, tool events need it too) but Codex is not
    installed on the author's machine, so it has not been run end to end.
 2. Whether `hold` should have a per-turn cap lower than the harness default.
-3. Release packaging: signed tags, signed checksums, and `agents-room update`
-   verifies both against a key embedded in the binary.
-4. Automatic lease renewal. `lease_renew` exists, but nothing calls it on a
+3. Automatic lease renewal. `lease_renew` exists, but nothing calls it on a
    schedule yet; a long edit can still outlive its TTL.
-5. Automatic pruning. `agents-room prune` exists, but no timer runs it.
-6. Sending into a room where you are the only member, or to a `file:`
+4. Automatic pruning. `agents-room prune` exists, but no timer runs it.
+5. Sending into a room where you are the only member, or to a `file:`
    selector on a path only you hold, still stores a message with zero
-   recipients. It is reported now, not rejected: a broadcast in a room of
-   one is legitimate. Revisit if agents keep missing it.
-7. Rooms created before join normalised the prefix stay split, because
+   recipients. The count is reported back by `msg_send` and `msg_recv`
+   rather than the send being rejected: a broadcast in a room of one is
+   legitimate. Revisit if agents keep missing it.
+6. Rooms created before join normalised the prefix stay split, because
    merging them would move sessions between rooms without their consent.
    `doctor` names each split and the two commands that repair it; nothing
    fixes one automatically.
