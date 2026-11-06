@@ -228,6 +228,32 @@ func TestDoctorReportsSplitSharedRoom(t *testing.T) {
 	}
 }
 
+// One process registered twice is one chat counted twice. doctor has to say
+// so, because room_who cannot: it has no way to know two ids are one chat.
+func TestDoctorReportsDuplicatePID(t *testing.T) {
+	run := setup(t)
+	run("join", "--room", "repo:x", "--key", "a")
+
+	// The second join is what the old room_join did without a harness key.
+	db, err := store.Open(os.Getenv("AGENTS_ROOM_DB"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.SQL().ExecContext(context.Background(), `
+		INSERT INTO sessions (id, room_id, harness, cwd, pid, label, tags, autonomy,
+		                      joined_at, last_seen, harness_key)
+		SELECT 'dup1', room_id, harness, cwd, pid, label, tags, autonomy,
+		       joined_at, last_seen, '' FROM sessions LIMIT 1`); err != nil {
+		t.Fatalf("insert duplicate session: %v", err)
+	}
+
+	_, out, _ := run("doctor")
+	if !strings.Contains(out, "has 2 sessions") {
+		t.Fatalf("doctor did not report the duplicate pid; output:\n%s", out)
+	}
+}
+
 // writeFile is a small helper so the drift test does not import os twice.
 func writeFile(path, content string) error {
 	return os.WriteFile(path, []byte(content), 0o644)

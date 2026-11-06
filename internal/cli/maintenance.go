@@ -222,6 +222,11 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 				"Each of them rejoins once, then runs `agents-room leave --session <id> --room %s`",
 				split.Bare, split.Shared, split.Stranded, split.Bare)
 		}
+		for _, dup := range h.DuplicatePIDs(ctx) {
+			line(false, "pid %d has %d sessions (%s); they are one chat split into several, so room_who overcounts. "+
+				"Update, rejoin with `--key`, then leave the extras",
+				dup.PID, len(dup.IDs), strings.Join(dup.IDs, ", "))
+		}
 	}
 
 	fmt.Fprintln(stdout, "\nHarness configuration")
