@@ -29,8 +29,14 @@ func TestMain(m *testing.M) {
 	defer os.RemoveAll(dir)
 	binDir = dir
 
+	// On Windows, go build -o writes exactly the name it is given, so the
+	// extension has to be part of it.
+	suffix := ""
+	if runtime.GOOS == "windows" {
+		suffix = ".exe"
+	}
 	for _, name := range []string{"agents-room", "agents-room-hook", "agents-room-mcp"} {
-		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name), "./cmd/"+name)
+		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name+suffix), "./cmd/"+name)
 		cmd.Dir = "../.."
 		if out, err := cmd.CombinedOutput(); err != nil {
 			fmt.Fprintf(os.Stderr, "build %s: %v\n%s", name, err, out)
