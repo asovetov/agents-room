@@ -423,8 +423,13 @@ func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration)
 	}
 	cutoff := h.now() - int64(maxAge.Seconds())
 
+	// Membership is session_rooms, not the legacy sessions.room_id column.
+	// Filtering on room_id would make `prune --room shared:aerobasis` see
+	// nobody: a session's primary room is the one it joined first.
 	rows, err := h.db.SQL().QueryContext(ctx, `
-		SELECT id FROM sessions WHERE room_id = ? AND last_seen < ?`, roomID, cutoff)
+		SELECT s.id FROM sessions s
+		JOIN session_rooms sr ON sr.session_id = s.id
+		WHERE sr.room_id = ? AND s.last_seen < ?`, roomID, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("prune: list stale: %w", err)
 	}
