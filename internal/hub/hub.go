@@ -724,6 +724,43 @@ func (h *Hub) RoomNames(ctx context.Context) []string {
 	return out
 }
 
+// DuplicatePID is one process registered as more than one session.
+type DuplicatePID struct {
+	PID  int
+	IDs  []string
+	Room string // the repository room the first of them is in
+}
+
+// DuplicatePIDs finds one process holding several session rows.
+//
+// A harness runs one chat per process, so two rows for one pid are the same
+// chat counted twice. It happened when room_join minted a session without
+// the harness key, beside the one the SessionStart hook had already made;
+// room_who then reported more agents than exist.
+func (h *Hub) DuplicatePIDs(ctx context.Context) []DuplicatePID {
+	rows, err := h.db.SQL().QueryContext(ctx, `
+		SELECT pid, GROUP_CONCAT(id) FROM sessions
+		WHERE pid > 0
+		GROUP BY pid HAVING COUNT(*) > 1
+		ORDER BY pid`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+
+	var out []DuplicatePID
+	for rows.Next() {
+		var d DuplicatePID
+		var ids string
+		if rows.Scan(&d.PID, &ids) != nil {
+			continue
+		}
+		d.IDs = strings.Split(ids, ",")
+		out = append(out, d)
+	}
+	return out
+}
+
 // HasRoom reports whether a room with this name exists.
 func (h *Hub) HasRoom(ctx context.Context, name string) bool {
 	_, err := h.roomID(ctx, name)
