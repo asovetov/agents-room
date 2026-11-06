@@ -74,6 +74,10 @@ type Session struct {
 	Autonomy int      `json:"autonomy"`
 	JoinedAt int64    `json:"joined_at"`
 	LastSeen int64    `json:"last_seen"`
+	// Warning is set when the join succeeded but looks like a mistake the
+	// caller can still correct. It is not an error: a join that is right for
+	// an unusual setup must still work.
+	Warning string `json:"warning,omitempty"`
 }
 
 // Autonomy levels. The effective level is the minimum of what the agent
@@ -244,7 +248,24 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 		ID: sessionID, Rooms: rooms, Harness: opt.Harness, Cwd: opt.Cwd,
 		PID: opt.PID, Label: opt.Label, Tags: opt.Tags, Autonomy: effective,
 		JoinedAt: now, LastSeen: now,
+		Warning: harnessKeyWarning(opt.HarnessKey),
 	}, nil
+}
+
+// harnessKeyWarning reports a harness key that does not belong to the process
+// asking, which is almost always a copy-paste from another chat.
+//
+// It is a warning, not a refusal: a caller may legitimately run under a key
+// it set itself, and the room must not break for that. But passing the wrong
+// key silently adopts another chat's session, which is how one chat came to
+// answer messages addressed to a different one.
+func harnessKeyWarning(key string) string {
+	env := strings.TrimSpace(os.Getenv("CLAUDE_CODE_SESSION_ID"))
+	if key == "" || env == "" || key == env {
+		return ""
+	}
+	return fmt.Sprintf("harness_key %q is not this process's CLAUDE_CODE_SESSION_ID (%q); "+
+		"the session of another chat may have been adopted", key, env)
 }
 
 // Leave removes a session from every room and releases every lease it holds.

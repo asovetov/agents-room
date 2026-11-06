@@ -77,6 +77,7 @@ type joinOut struct {
 	SessionID string   `json:"session_id"`
 	Rooms     []string `json:"rooms"`
 	Autonomy  int      `json:"autonomy"`
+	Warning   string   `json:"warning,omitempty"`
 }
 
 func registerRoomTools(s *mcp.Server, h *hub.Hub) {
@@ -104,8 +105,14 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 		if err != nil {
 			return nil, joinOut{}, err
 		}
-		return text(fmt.Sprintf("joined %s as %s", strings.Join(sess.Rooms, ", "), sess.ID)),
-			joinOut{SessionID: sess.ID, Rooms: sess.Rooms, Autonomy: sess.Autonomy}, nil
+		msg := fmt.Sprintf("joined %s as %s", strings.Join(sess.Rooms, ", "), sess.ID)
+		if sess.Warning != "" {
+			// The model reads this text, and a wrong key silently adopts
+			// another chat's session, so it has to be visible, not logged.
+			msg += "\nwarning: " + sess.Warning
+		}
+		return text(msg),
+			joinOut{SessionID: sess.ID, Rooms: sess.Rooms, Autonomy: sess.Autonomy, Warning: sess.Warning}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
