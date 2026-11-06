@@ -38,13 +38,11 @@ func TestMain(m *testing.M) {
 	if runtime.GOOS == "windows" {
 		suffix = ".exe"
 	}
-	for _, name := range []string{"agents-room", "agents-room-hook", "agents-room-mcp"} {
-		cmd := exec.Command("go", "build", "-o", filepath.Join(dir, name+suffix), "./cmd/"+name)
-		cmd.Dir = "../.."
-		if out, err := cmd.CombinedOutput(); err != nil {
-			fmt.Fprintf(os.Stderr, "build %s: %v\n%s", name, err, out)
-			os.Exit(1)
-		}
+	cmd := exec.Command("go", "build", "-o", filepath.Join(dir, "agents-room"+suffix), "./cmd/agents-room")
+	cmd.Dir = "../.."
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "build agents-room: %v\n%s", err, out)
+		os.Exit(1)
 	}
 	os.Exit(m.Run())
 }
@@ -90,11 +88,15 @@ func newEnv(t *testing.T) *env {
 // run executes a binary with the shared store and returns stdout.
 func (e *env) run(name string, stdin string, args ...string) (string, int) {
 	e.t.Helper()
-	exe := filepath.Join(binDir, name)
+	exe := filepath.Join(binDir, "agents-room")
 	if runtime.GOOS == "windows" {
 		exe += ".exe"
 	}
-	cmd := exec.Command(exe, args...)
+	// name may name a subcommand, e.g. "agents-room hook". The first token is
+	// the program itself, which exec supplies; passing it again would make
+	// the binary treat it as a subcommand.
+	sub := strings.Split(name, " ")
+	cmd := exec.Command(exe, append(sub[1:], args...)...)
 	cmd.Env = append(scrubEnv(os.Environ()), "AGENTS_ROOM_DB="+e.db)
 	cmd.Dir = e.cwd
 	if stdin != "" {
@@ -185,7 +187,7 @@ func TestHookJoinsIdempotentlyAcrossSessionStarts(t *testing.T) {
 	// Claude Code fires SessionStart on startup, resume, clear, compact and
 	// fork. All five are the same chat.
 	for i := 0; i < 5; i++ {
-		if _, code := e.run("agents-room-hook", payload, "--event=SessionStart", "--autonomy=2"); code != 0 {
+		if _, code := e.run("agents-room hook", payload, "--event=SessionStart", "--autonomy=2"); code != 0 {
 			t.Fatalf("hook exit %d on start %d", code, i)
 		}
 	}
@@ -208,7 +210,7 @@ func TestHookStopReportsUnreadWithoutHolding(t *testing.T) {
 	payload := `{"session_id":"hs-1","cwd":"` + strings.ReplaceAll(e.cwd, `\`, `\\`) + `"}`
 
 	// The hook joins at notify level, so Stop must stay silent.
-	if _, code := e.run("agents-room-hook", payload, "--event=SessionStart", "--autonomy=0"); code != 0 {
+	if _, code := e.run("agents-room hook", payload, "--event=SessionStart", "--autonomy=0"); code != 0 {
 		t.Fatalf("hook join exit %d", code)
 	}
 
@@ -227,7 +229,7 @@ func TestHookStopReportsUnreadWithoutHolding(t *testing.T) {
 		t.Fatalf("send exit %d", code)
 	}
 
-	stopOut, code := e.run("agents-room-hook", payload, "--event=Stop")
+	stopOut, code := e.run("agents-room hook", payload, "--event=Stop")
 	if code != 0 {
 		t.Fatalf("stop hook exit %d", code)
 	}
@@ -237,10 +239,10 @@ func TestHookStopReportsUnreadWithoutHolding(t *testing.T) {
 
 	// Autonomy is negotiated at join, so raising it means rejoining. The
 	// hook does that on SessionStart with the new level.
-	if _, code := e.run("agents-room-hook", payload, "--event=SessionStart", "--autonomy=1"); code != 0 {
+	if _, code := e.run("agents-room hook", payload, "--event=SessionStart", "--autonomy=1"); code != 0 {
 		t.Fatalf("rejoin exit %d", code)
 	}
-	holdOut, _ := e.run("agents-room-hook", payload, "--event=Stop", "--autonomy=1")
+	holdOut, _ := e.run("agents-room hook", payload, "--event=Stop", "--autonomy=1")
 	if !strings.Contains(holdOut, `"decision":"block"`) {
 		t.Fatalf("hold-level Stop output = %q, want a block decision", holdOut)
 	}
@@ -250,10 +252,10 @@ func TestHookSessionEndRemovesTheSession(t *testing.T) {
 	e := newEnv(t)
 	payload := `{"session_id":"hs-end","cwd":"` + strings.ReplaceAll(e.cwd, `\`, `\\`) + `"}`
 
-	if _, code := e.run("agents-room-hook", payload, "--event=SessionStart"); code != 0 {
+	if _, code := e.run("agents-room hook", payload, "--event=SessionStart"); code != 0 {
 		t.Fatalf("join exit %d", code)
 	}
-	if _, code := e.run("agents-room-hook", payload, "--event=SessionEnd"); code != 0 {
+	if _, code := e.run("agents-room hook", payload, "--event=SessionEnd"); code != 0 {
 		t.Fatalf("leave exit %d", code)
 	}
 
@@ -271,12 +273,12 @@ func TestHookSessionEndRemovesTheSession(t *testing.T) {
 // child process over stdin and stdout.
 func TestMCPOverStdio(t *testing.T) {
 	e := newEnv(t)
-	exe := filepath.Join(binDir, "agents-room-mcp")
+	exe := filepath.Join(binDir, "agents-room")
 	if runtime.GOOS == "windows" {
 		exe += ".exe"
 	}
 
-	cmd := exec.Command(exe)
+	cmd := exec.Command(exe, "mcp")
 	cmd.Env = append(scrubEnv(os.Environ()), "AGENTS_ROOM_DB="+e.db)
 	cmd.Dir = e.cwd
 
