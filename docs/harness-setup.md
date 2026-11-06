@@ -254,7 +254,9 @@ which is how to run one agent in isolation.
 
 Discovery covers the hook path. An agent that joins through the CLI or the
 MCP tool passes `--also` or `extra_rooms` itself, because there is no
-environment for it to read.
+environment for it to read. The prefix is added there too, so
+`--also aerobasis` and `AGENTS_ROOM_SHARED=aerobasis` land in one room
+rather than two that look alike.
 
 ## Keeping it current
 

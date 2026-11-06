@@ -299,6 +299,90 @@ func TestSharedRoomsFromEnv(t *testing.T) {
 	}
 }
 
+// "--also aerobasis" and "AGENTS_ROOM_SHARED=aerobasis" must land in the same
+// room. Before this, the unprefixed name created a second room with the same
+// look and no shared membership, and messages sent there reached nobody.
+func TestJoinNormalizesUnprefixedSharedRoom(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	// One session spells it without the prefix, as the CLI flag allows.
+	cli, err := h.Join(ctx, JoinOptions{
+		Room: "repo:gcs", ExtraRooms: []string{"aerobasis"},
+		Harness: "test", HarnessKey: "cli",
+	})
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	// The other spells it the way the hook does, with the prefix.
+	hooked, err := h.Join(ctx, JoinOptions{
+		Room: "repo:tracker", ExtraRooms: []string{"shared:aerobasis"},
+		Harness: "test", HarnessKey: "hooked",
+	})
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+
+	for _, s := range []*Session{cli, hooked} {
+		if len(s.Rooms) != 2 {
+			t.Fatalf("%s rooms = %v, want two", s.ID, s.Rooms)
+		}
+		for _, r := range s.Rooms {
+			if r == "aerobasis" {
+				t.Fatalf("unprefixed room %q survived; want shared:aerobasis", r)
+			}
+		}
+	}
+
+	who, err := h.Who(ctx, "shared:aerobasis")
+	if err != nil {
+		t.Fatalf("who: %v", err)
+	}
+	if len(who) != 2 {
+		t.Fatalf("shared room has %d sessions, want both", len(who))
+	}
+
+	// And they can reach each other.
+	if _, err := h.Send(ctx, SendOptions{From: cli.ID, To: hooked.ID, Body: "hi"}); err != nil {
+		t.Fatalf("send across the shared room: %v", err)
+	}
+}
+
+// A send whose selector matches nobody must say so instead of reporting a
+// delivery that will never happen.
+func TestSendReportsZeroRecipients(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+
+	m, err := h.Send(ctx, SendOptions{From: a.ID, To: "tag:nobody", Body: "x"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if m.Recipients != 0 {
+		t.Fatalf("recipients = %d, want 0", m.Recipients)
+	}
+
+	// A broadcast in a room of one is the same situation.
+	b, err := h.Send(ctx, SendOptions{From: a.ID, To: "*", Body: "x"})
+	if err != nil {
+		t.Fatalf("broadcast: %v", err)
+	}
+	if b.Recipients != 0 {
+		t.Fatalf("broadcast recipients = %d, want 0", b.Recipients)
+	}
+
+	// With a second session the count is honest.
+	join(t, h, "repo:x", "b")
+	c, err := h.Send(ctx, SendOptions{From: a.ID, To: "*", Body: "x"})
+	if err != nil {
+		t.Fatalf("broadcast: %v", err)
+	}
+	if c.Recipients != 1 {
+		t.Fatalf("broadcast recipients = %d, want 1", c.Recipients)
+	}
+}
+
 func TestSharedRoomsDeduplicate(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".agents-room"), 0o755); err != nil {

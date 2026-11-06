@@ -137,7 +137,15 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 	now := h.now()
 	rooms := append([]string{opt.Room}, opt.ExtraRooms...)
 	roomIDs := make([]string, 0, len(rooms))
-	for _, name := range rooms {
+	for i, name := range rooms {
+		// A shared room is spelled "shared:<name>", and callers forget the
+		// prefix. Without this, `--also aerobasis` and
+		// AGENTS_ROOM_SHARED=aerobasis would be two rooms that look like one
+		// and never meet.
+		if i > 0 {
+			name = NormalizeSharedRoom(name)
+			rooms[i] = name
+		}
 		id, err := h.ensureRoom(ctx, name, now)
 		if err != nil {
 			return nil, err
@@ -669,9 +677,7 @@ func SharedRoomsFrom(dir string) []string {
 		if name == "" || strings.HasPrefix(name, "#") {
 			return
 		}
-		if !strings.Contains(name, ":") {
-			name = "shared:" + name
-		}
+		name = NormalizeSharedRoom(name)
 		if !seen[name] {
 			seen[name] = true
 			out = append(out, name)
@@ -693,6 +699,47 @@ func SharedRoomsFrom(dir string) []string {
 		}
 	}
 	return out
+}
+
+// RoomNames lists every room name in the store, oldest first.
+func (h *Hub) RoomNames(ctx context.Context) []string {
+	rows, err := h.db.SQL().QueryContext(ctx,
+		`SELECT name FROM rooms ORDER BY created_at ASC, name ASC`)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var name string
+		if rows.Scan(&name) == nil {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// HasRoom reports whether a room with this name exists.
+func (h *Hub) HasRoom(ctx context.Context, name string) bool {
+	_, err := h.roomID(ctx, name)
+	return err == nil
+}
+
+// NormalizeSharedRoom spells a shared room the one way the store knows it.
+//
+// "aerobasis" and "shared:aerobasis" are the same room to a human and two
+// different rows to the store, so one of them silently collects nobody. The
+// rule is the one the docs promise: a name without a prefix gets "shared:".
+// A name with any other prefix ("repo:x") is left alone.
+func NormalizeSharedRoom(name string) string {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ""
+	}
+	if strings.Contains(name, ":") {
+		return name
+	}
+	return "shared:" + name
 }
 
 // repoRoot returns the git top level of dir, or dir itself.

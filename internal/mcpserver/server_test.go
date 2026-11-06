@@ -8,6 +8,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/asovetov/agents-room/internal/hub"
+	"github.com/asovetov/agents-room/internal/store"
 )
 
 // connect wires a client to a server over the in-memory transport, the same
@@ -185,6 +186,66 @@ func TestAutonomyCapOverMCP(t *testing.T) {
 	})
 	if v, _ := joined["autonomy"].(float64); int(v) != hub.AutonomyHold {
 		t.Fatalf("session autonomy = %v, want it clamped to %d", joined["autonomy"], hub.AutonomyHold)
+	}
+}
+
+// room_who promises to show who is alive, and last_seen is how it knows.
+// Every tool call carrying a session_id has to move it, not only the ones
+// that happen to pass through the wake path.
+func TestToolCallsUpdateLastSeen(t *testing.T) {
+	cs, h := connect(t)
+	ctx := context.Background()
+
+	joined := call(t, cs, "room_join", map[string]any{
+		"room": "repo:x", "harness": "test", "harness_key": "k",
+	})
+	id, _ := joined["session_id"].(string)
+	if id == "" {
+		t.Fatalf("join returned no session id: %v", joined)
+	}
+
+	// Backdate last_seen far enough that a real update cannot be confused
+	// with the same-second granularity of a fast test.
+	const stale = 1
+	db, err := store.Open(h.Path())
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.SQL().ExecContext(ctx,
+		`UPDATE sessions SET last_seen = ? WHERE id = ?`, stale, id); err != nil {
+		t.Fatalf("backdate last_seen: %v", err)
+	}
+
+	// A tool that does nothing to the session itself.
+	call(t, cs, "msg_unread", map[string]any{"session_id": id})
+
+	after, err := h.Who(ctx, "repo:x")
+	if err != nil {
+		t.Fatalf("who: %v", err)
+	}
+	if len(after) != 1 {
+		t.Fatalf("who returned %d sessions, want 1", len(after))
+	}
+	if after[0].LastSeen == stale {
+		t.Fatal("a tool call did not update last_seen; room_who would show a live session as stale")
+	}
+}
+
+// A send that reaches nobody must say so in its output instead of looking
+// like a delivery.
+func TestSendReportsRecipientCount(t *testing.T) {
+	cs, _ := connect(t)
+	joined := call(t, cs, "room_join", map[string]any{
+		"room": "repo:x", "harness": "test", "harness_key": "a",
+	})
+	id, _ := joined["session_id"].(string)
+
+	out := call(t, cs, "msg_send", map[string]any{
+		"session_id": id, "to": "tag:nobody", "body": "x",
+	})
+	if n, _ := out["recipients"].(float64); n != 0 {
+		t.Fatalf("recipients = %v, want 0", out["recipients"])
 	}
 }
 

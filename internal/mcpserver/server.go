@@ -8,6 +8,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -31,7 +32,33 @@ func New(h *hub.Hub) *mcp.Server {
 	registerLeaseTools(s, h)
 	registerDriftTools(s, h)
 
+	// A session that calls a tool is alive, and room_who has to say so.
+	// Every tool already carries session_id, so one hook covers all of
+	// them without a Touch call in each handler.
+	s.AddReceivingMiddleware(touchOnToolCall(h))
+
 	return s
+}
+
+// touchOnToolCall updates last_seen for the session named in a tools/call
+// argument. A missing or unknown session id is not an error: the tool
+// handler reports that itself, with a better message.
+func touchOnToolCall(h *hub.Hub) mcp.Middleware {
+	return func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			if method == "tools/call" {
+				if params, ok := req.GetParams().(*mcp.CallToolParamsRaw); ok {
+					var args struct {
+						SessionID string `json:"session_id"`
+					}
+					if json.Unmarshal(params.Arguments, &args) == nil && args.SessionID != "" {
+						_ = h.Touch(ctx, args.SessionID)
+					}
+				}
+			}
+			return next(ctx, method, req)
+		}
+	}
 }
 
 // ---- room tools ----
@@ -183,6 +210,9 @@ type sendIn struct {
 
 type sendOut struct {
 	MessageID string `json:"message_id"`
+	// Recipients is zero when the selector matched nobody: the message is
+	// stored but will never be read, so the sender must not assume delivery.
+	Recipients int `json:"recipients"`
 }
 
 func registerMessageTools(s *mcp.Server, h *hub.Hub) {
@@ -201,7 +231,12 @@ func registerMessageTools(s *mcp.Server, h *hub.Hub) {
 		if err != nil {
 			return nil, sendOut{}, err
 		}
-		return text("sent " + m.ID), sendOut{MessageID: m.ID}, nil
+		if m.Recipients == 0 {
+			return text(fmt.Sprintf("stored %s, but %s matched no recipient", m.ID, m.Selector)),
+				sendOut{MessageID: m.ID}, nil
+		}
+		return text(fmt.Sprintf("sent %s to %d session(s)", m.ID, m.Recipients)),
+			sendOut{MessageID: m.ID, Recipients: m.Recipients}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
