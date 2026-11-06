@@ -239,6 +239,10 @@ func TestDoctorReportsSplitSharedRoom(t *testing.T) {
 // so, because room_who cannot: it has no way to know two ids are one chat.
 func TestDoctorReportsDuplicatePID(t *testing.T) {
 	run := setup(t)
+	// A pid is what makes the two rows one chat, and join records none when
+	// no harness is up the process chain (CI has none). Name one the way a
+	// harness does, so the test does not depend on where it runs.
+	t.Setenv("AGENTS_ROOM_PID", "4242")
 	run("join", "--room", "repo:x", "--key", "a")
 
 	// The second join is what the old room_join did without a harness key.
