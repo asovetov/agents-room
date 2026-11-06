@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -169,9 +170,13 @@ func TestInstallReplacesFile(t *testing.T) {
 	if string(got) != "new content" {
 		t.Fatalf("target = %q", got)
 	}
-	info, _ := os.Stat(target)
-	if info.Mode()&0o111 == 0 {
-		t.Fatal("installed binary is not executable")
+	// Windows has no execute bit; the mode bits there describe read-only
+	// access instead. The check is meaningful only on a POSIX system.
+	if runtime.GOOS != "windows" {
+		info, _ := os.Stat(target)
+		if info.Mode()&0o111 == 0 {
+			t.Fatal("installed binary is not executable")
+		}
 	}
 	if _, err := os.Stat(target + ".new"); err == nil {
 		t.Fatal("temporary file left behind")
