@@ -77,6 +77,14 @@ stdout on success, so no duplicate context is injected.
 `SessionStart` output goes straight into the model context, so the hook stays
 silent there by design.
 
+The `Stop` hook never blocks a Stop it caused itself. Claude Code sets
+`stop_hook_active` on the Stop that continues a turn a previous Stop hook
+held, and the hook stays silent on it whatever the autonomy level. Without
+that check the agent can never finish: every block starts a turn whose Stop
+is blocked again, and the chat spins until it is interrupted. A message that
+was nudged but not fetched is offered again on the next Stop that is not a
+continuation.
+
 A join is keyed on the harness session id, so the five `SessionStart`
 matchers (startup, resume, clear, compact, fork) all update one room
 session instead of creating five.

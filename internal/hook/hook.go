@@ -28,6 +28,11 @@ type hookInput struct {
 	Cwd       string         `json:"cwd"`
 	Source    string         `json:"source"`
 	Extra     map[string]any `json:"extra"`
+	// StopHookActive is set by Claude Code on a Stop that is already
+	// continuing a turn because a previous Stop blocked it. Blocking again
+	// from here is how a hook becomes an endless loop: the agent never
+	// finishes, and each block starts another turn.
+	StopHookActive bool `json:"stop_hook_active"`
 }
 
 // Run executes one hook invocation and returns the process exit code.
@@ -105,7 +110,7 @@ func run(harness, event, room string, autonomy int) int {
 		return 0
 
 	case eventNudge:
-		return nudge(ctx, h, harness, roomName, in.SessionID, event)
+		return nudge(ctx, h, harness, roomName, in.SessionID, event, in.StopHookActive)
 	}
 	return 0
 }
@@ -147,7 +152,12 @@ func normalizeEvent(harness, event string) string {
 // nudge emits a wake signal when the session has unread messages.
 //
 // The body stays in the store. The signal is one line.
-func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event string) int {
+//
+// stopActive reports that the harness is already running a turn this hook
+// asked for. It is not re-blocked: the turn has to be allowed to end, or the
+// agent never reaches the recv the nudge was asking for and the Stop hook
+// loops forever.
+func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event string, stopActive bool) int {
 	self, err := h.FindSession(ctx, roomName, harness, harnessKey)
 	if err != nil || self == nil {
 		return 0
@@ -155,6 +165,15 @@ func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event
 
 	res, err := wake.Check(ctx, h, self.ID)
 	if err != nil || res.Unread == 0 {
+		return 0
+	}
+
+	if stopActive {
+		// The harness is already continuing a turn because a Stop hook asked
+		// it to. Asking again is the loop: the agent is never allowed to end,
+		// and every block starts another turn. Stay silent, and let the
+		// message be offered again on the next Stop that is not a
+		// continuation.
 		return 0
 	}
 
@@ -260,9 +279,13 @@ func jsonString(v any) string {
 	return string(raw)
 }
 
-func readInput() hookInput {
+func readInput() hookInput { return readInputFrom(os.Stdin) }
+
+// readInputFrom is readInput over an arbitrary reader, so a test can feed a
+// harness payload without touching the process's stdin.
+func readInputFrom(r io.Reader) hookInput {
 	var in hookInput
-	raw, err := io.ReadAll(io.LimitReader(os.Stdin, 1<<20))
+	raw, err := io.ReadAll(io.LimitReader(r, 1<<20))
 	if err != nil || len(raw) == 0 {
 		return in
 	}
