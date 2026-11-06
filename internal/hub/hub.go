@@ -411,8 +411,13 @@ func (h *Hub) sessionRoomIDs(ctx context.Context, sessionID string) ([]string, e
 //
 // A harness that dies without firing its end event leaves a row behind. Its
 // leases still expire on their own, but the row would keep showing in
-// room_who forever, so an operator can sweep it. PruneStale never touches a
-// session seen within maxAge, which is what keeps a working agent safe.
+// room_who forever, so an operator can sweep it.
+//
+// A session is only removed when both tests agree: it has been quiet longer
+// than maxAge and its process is gone. last_seen alone is not enough. It
+// moves on tool calls and on a wake nudge, so an agent that is thinking, or
+// sitting in a long edit, is quiet while very much alive; pruning it would
+// delete the row and release the leases on files it is still writing.
 func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration) (int, error) {
 	roomID, err := h.roomID(ctx, room)
 	if errors.Is(err, store.ErrNotFound) {
@@ -427,7 +432,7 @@ func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration)
 	// Filtering on room_id would make `prune --room shared:storefront` see
 	// nobody: a session's primary room is the one it joined first.
 	rows, err := h.db.SQL().QueryContext(ctx, `
-		SELECT s.id FROM sessions s
+		SELECT s.id, s.pid FROM sessions s
 		JOIN session_rooms sr ON sr.session_id = s.id
 		WHERE sr.room_id = ? AND s.last_seen < ?`, roomID, cutoff)
 	if err != nil {
@@ -436,9 +441,14 @@ func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration)
 	var ids []string
 	for rows.Next() {
 		var id string
-		if err := rows.Scan(&id); err != nil {
+		var pid int
+		if err := rows.Scan(&id, &pid); err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("prune: scan: %w", err)
+		}
+		// Quiet but running is not stale: the agent is thinking or editing.
+		if processAlive(pid) {
+			continue
 		}
 		ids = append(ids, id)
 	}

@@ -39,6 +39,11 @@ so a tool added later inherits it without its own `Touch` call. `prune` reads
 the same membership table as `room_who`, so a session reachable only through
 a shared room can still be swept from that room.
 
+Because `last_seen` only moves on a tool call or a nudge, a quiet session can
+be very much alive. `prune` therefore removes a session only when it has also
+been quiet longer than the threshold **and** its pid is gone; it releases no
+leases for a process that still exists.
+
 A shared room is spelled `shared:<name>`. An extra room named without a
 prefix gets one at join time, because `--also storefront` and
 `AGENTS_ROOM_SHARED=storefront` are the same room to a human and were two
