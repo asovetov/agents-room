@@ -173,6 +173,8 @@ func TestLeaveRoomKeepsOtherMemberships(t *testing.T) {
 func TestLeaseContentionAcrossSharedRoom(t *testing.T) {
 	ctx := context.Background()
 	h := newHub(t)
+	// Absolute on every platform: /tmp is not, on Windows.
+	file := filepath.Join(t.TempDir(), "shared-file.go")
 
 	a, _ := h.Join(ctx, JoinOptions{
 		Room: "repo:a", ExtraRooms: []string{"shared:s"}, Harness: "test", HarnessKey: "a",
@@ -181,10 +183,10 @@ func TestLeaseContentionAcrossSharedRoom(t *testing.T) {
 		Room: "repo:b", ExtraRooms: []string{"shared:s"}, Harness: "test", HarnessKey: "b",
 	})
 
-	if r, _ := h.Claim(ctx, a.ID, "/tmp/shared-file.go", 60, ModeExclusive); !r.OK {
+	if r, _ := h.Claim(ctx, a.ID, file, 60, ModeExclusive); !r.OK {
 		t.Fatal("first claim failed")
 	}
-	res, err := h.Claim(ctx, b.ID, "/tmp/shared-file.go", 60, ModeExclusive)
+	res, err := h.Claim(ctx, b.ID, file, 60, ModeExclusive)
 	if err != nil {
 		t.Fatalf("second claim: %v", err)
 	}
@@ -198,6 +200,8 @@ func TestLeaseContentionAcrossSharedRoom(t *testing.T) {
 func TestFileSelectorAcrossSharedRoom(t *testing.T) {
 	ctx := context.Background()
 	h := newHub(t)
+	dir := t.TempDir()
+	file := filepath.Join(dir, "wire.go")
 
 	a, _ := h.Join(ctx, JoinOptions{
 		Room: "repo:a", ExtraRooms: []string{"shared:s"}, Harness: "test", HarnessKey: "a",
@@ -206,11 +210,13 @@ func TestFileSelectorAcrossSharedRoom(t *testing.T) {
 		Room: "repo:b", ExtraRooms: []string{"shared:s"}, Harness: "test", HarnessKey: "b",
 	})
 
-	if r, _ := h.Claim(ctx, b.ID, "/tmp/wire.go", 60, ModeExclusive); !r.OK {
+	if r, _ := h.Claim(ctx, b.ID, file, 60, ModeExclusive); !r.OK {
 		t.Fatal("claim failed")
 	}
+	// The selector names the same directory, in the form the test can build
+	// portably.
 	if _, err := h.Send(ctx, SendOptions{
-		From: a.ID, To: "file:/tmp/*.go", Subject: "s", Body: "b",
+		From: a.ID, To: "file:" + filepath.Join(dir, "*.go"), Subject: "s", Body: "b",
 	}); err != nil {
 		t.Fatalf("send to file: %v", err)
 	}
