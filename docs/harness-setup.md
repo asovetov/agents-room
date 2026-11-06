@@ -256,6 +256,18 @@ Discovery covers the hook path. An agent that joins through the CLI or the
 MCP tool passes `--also` or `extra_rooms` itself, because there is no
 environment for it to read.
 
+## Keeping it current
+
+```bash
+agents-room update --check
+agents-room update
+```
+
+The updater verifies the release signature against the key embedded in the
+binary before it replaces anything, and migrates the harness configuration
+in the same run. Running `agents-room doctor` afterwards reports any file
+that still names an old command.
+
 ## Verifying the setup
 
 ```bash

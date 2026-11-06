@@ -40,8 +40,8 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    (Stop needs the JSON envelope, tool events need it too) but Codex is not
    installed on the author's machine, so it has not been run end to end.
 2. Whether `hold` should have a per-turn cap lower than the harness default.
-3. Release packaging: the tag workflow and `make install` exist; checksums
-   are unsigned (no GPG key yet).
+3. Release packaging: signed tags, signed checksums, and `agents-room update`
+   verifies both against a key embedded in the binary.
 4. Automatic lease renewal. `lease_renew` exists, but nothing calls it on a
    schedule yet; a long edit can still outlive its TTL.
 5. Automatic pruning. `agents-room prune` exists, but no timer runs it.

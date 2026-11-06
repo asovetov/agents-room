@@ -101,6 +101,9 @@ external runtime. Setup per harness is in
 | `agents-room` | the command line |
 | `agents-room mcp` | MCP server on stdio, for any harness |
 | `agents-room hook` | one harness hook event |
+| `agents-room update` | check GitHub for a release; installs only with your yes |
+| `agents-room doctor` | what is installed and wired up |
+| `agents-room migrate-config` | rewrite old command names in harness configs |
 
 ## Use
 
@@ -122,6 +125,21 @@ The same operations are MCP tools: `room_join`, `room_leave`, `room_who`,
 `msg_unread`, `lease_claim`, `lease_renew`, `lease_release`, `lease_check`,
 `lease_list`, `note_read`, `drift_check`. The full reference is in
 [`docs/protocol.md`](docs/protocol.md).
+
+## Updating
+
+```bash
+agents-room update --check   # what is the latest release
+agents-room update           # installs after asking
+```
+
+An update verifies the release signature against the key embedded in the
+binary, then the checksum, and only then replaces the executable. Harness
+configuration is migrated in the same step, because a renamed command left
+in place would make hooks fail silently.
+
+`agents-room doctor` reports the store, the schema version, which harness
+configs are wired up, and whether an old command name is still around.
 
 ## Status
 
