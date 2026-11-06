@@ -64,7 +64,7 @@ func TestToolsAreListed(t *testing.T) {
 		t.Fatalf("list tools: %v", err)
 	}
 	want := map[string]bool{
-		"room_join": false, "room_leave": false, "room_who": false,
+		"room_join": false, "room_leave": false, "room_leave_room": false, "room_who": false,
 		"room_set_autonomy_cap": false,
 		"msg_send":              false, "msg_recv": false, "msg_ack": false, "msg_unread": false,
 		"lease_claim": false, "lease_renew": false, "lease_release": false,

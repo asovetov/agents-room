@@ -5,7 +5,9 @@ How agents-room stores and exchanges coordination state.
 ## Model
 
 ```
-room     a namespace. A session joins repo:<name> automatically and may join shared rooms.
+room     a namespace. A session joins repo:<name> automatically and may join
+         any number of shared rooms, which is how agents in different
+         repositories reach each other.
 session  one agent process: harness, cwd, pid, label, tags, autonomy, last_seen
 message  one send: sender, selector, subject, body, created_at, expires_at
 delivery one row per resolved recipient, holding the delivery state
@@ -32,6 +34,18 @@ back; this follows that shape.
 A session's `last_seen` updates whenever it calls a tool, so `room_who` shows
 who is alive.
 
+Membership is many-to-many: `session_rooms` holds one row per (session, room).
+A chat in `gcs` that also joined `shared:storefront` is the same session in
+both rooms, with one session id. Rejoining with the same `harness_key` from a
+different room updates that session instead of creating a second one.
+
+The effective autonomy is the strictest cap of every room the session is in,
+so a quiet shared room cannot be bypassed by a loud repository room.
+
+A session sends to the union of its rooms. A direct session id must share at
+least one room with the sender; anything else is an error, not a silent
+no-op.
+
 ## Selectors
 
 | Selector | Resolves to |
@@ -44,8 +58,16 @@ who is alive.
 Paths are normalised to absolute form before they are stored, so
 `src/wire.go` and `/abs/src/wire.go` from the same directory contend for one
 lease. A file selector is matched against the leased path in three forms:
-the full path, the path relative to the room's working directory, and the
-bare base name. A trailing `/**` also matches everything below the prefix,
+the full path, the path relative to the **holder's** working directory, and
+the bare base name.
+
+The holder's directory is the anchor, not the room's: a shared room can hold
+sessions from several repositories, and `src/wire.go` means a different file
+in each of them.
+
+Lease contention is between sessions, not between room rows. A claim checks
+every session that shares at least one room with the claimant, so two agents
+that meet only in a shared room still cannot hold one file at the same time. A trailing `/**` also matches everything below the prefix,
 so `file:src/api/**` covers the whole tree.
 
 Matching uses `path.Match`, not `filepath.Match`: on Windows the latter
@@ -114,8 +136,9 @@ for it. Re-read before editing.
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `room_join` | `room?`, `label?`, `tags?`, `autonomy?`, `harness?`, `harness_key?` | `session_id`, `room`, `autonomy` |
-| `room_leave` | `session_id` | nothing |
+| `room_join` | `room?`, `extra_rooms?`, `label?`, `tags?`, `autonomy?`, `harness?`, `harness_key?` | `session_id`, `rooms`, `autonomy` |
+| `room_leave` | `session_id` | nothing, leaves every room |
+| `room_leave_room` | `session_id`, `room` | nothing, stays in the rest |
 | `room_who` | `session_id?`, `room?` | sessions |
 | `room_set_autonomy_cap` | `session_id?`, `room?`, `autonomy` | `room`, `autonomy` |
 | `msg_send` | `session_id`, `to`, `subject?`, `body?`, `reply_to?`, `ttl_s?` | `message_id` |

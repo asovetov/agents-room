@@ -68,12 +68,13 @@ func (h *Hub) Send(ctx context.Context, opt SendOptions) (*Message, error) {
 		return nil, errors.New("send: subject and body are both empty")
 	}
 
-	roomID, err := h.sessionRoom(ctx, opt.From)
+	roomIDs, err := h.sessionRoomIDs(ctx, opt.From)
 	if err != nil {
 		return nil, fmt.Errorf("send: %w", err)
 	}
+	roomID := roomIDs[0]
 
-	recipients, err := h.resolve(ctx, roomID, opt.From, opt.To)
+	recipients, err := h.resolve(ctx, roomIDs, opt.From, opt.To)
 	if err != nil {
 		return nil, err
 	}
@@ -128,23 +129,35 @@ func (h *Hub) Send(ctx context.Context, opt SendOptions) (*Message, error) {
 	}, nil
 }
 
-// resolve turns a selector into a list of session ids in the room.
-func (h *Hub) resolve(ctx context.Context, roomID, sender, selector string) ([]string, error) {
+// resolve turns a selector into a list of session ids.
+//
+// A sender reaches every room it is in, which is what lets an agent in one
+// repository address an agent in another through a shared room. Results are
+// de-duplicated: a session in two of the sender's rooms is one recipient.
+func (h *Hub) resolve(ctx context.Context, roomIDs []string, sender, selector string) ([]string, error) {
 	now := h.now()
 
 	switch {
 	case selector == "*":
-		return h.querySessions(ctx, `
-			SELECT id FROM sessions WHERE room_id = ? AND id <> ?`, roomID, sender)
+		return h.sessionsInRooms(ctx, roomIDs, sender)
 
 	case strings.HasPrefix(selector, "file:"):
 		pattern := strings.TrimPrefix(selector, "file:")
 		if pattern == "" {
 			return nil, errors.New("send: empty file selector")
 		}
-		rows, err := h.db.SQL().QueryContext(ctx,
-			`SELECT path, owner FROM leases WHERE room_id = ? AND expires_at > ?`,
-			roomID, now)
+		// A lease lives in the holder's repository room, so the search joins
+		// through session_rooms: a holder reachable only through a shared
+		// room must still be found.
+		// The holder's own working directory is what a relative selector is
+		// relative to. A shared room can hold sessions from different
+		// repositories, so the room's directory is the wrong anchor.
+		rows, err := h.db.SQL().QueryContext(ctx, `
+			SELECT l.path, l.owner, COALESCE(s.cwd, '') FROM leases l
+			JOIN session_rooms sr ON sr.session_id = l.owner
+			LEFT JOIN sessions s ON s.id = l.owner
+			WHERE sr.room_id IN (`+placeholders(len(roomIDs))+`) AND l.expires_at > ?`,
+			append(anySlice(roomIDs), now)...)
 		if err != nil {
 			return nil, fmt.Errorf("resolve file selector: %w", err)
 		}
@@ -153,14 +166,14 @@ func (h *Hub) resolve(ctx context.Context, roomID, sender, selector string) ([]s
 		seen := map[string]bool{}
 		out := []string{}
 		for rows.Next() {
-			var path, owner string
-			if err := rows.Scan(&path, &owner); err != nil {
+			var path, owner, holderCwd string
+			if err := rows.Scan(&path, &owner, &holderCwd); err != nil {
 				return nil, fmt.Errorf("resolve file selector: %w", err)
 			}
 			if owner == sender || seen[owner] {
 				continue
 			}
-			if h.matchLeasedPath(ctx, roomID, pattern, path) {
+			if matchLeasedPath(pattern, path, holderCwd) {
 				seen[owner] = true
 				out = append(out, owner)
 			}
@@ -172,42 +185,101 @@ func (h *Hub) resolve(ctx context.Context, roomID, sender, selector string) ([]s
 		if tag == "" {
 			return nil, errors.New("send: empty tag selector")
 		}
-		sessions, err := h.Who(ctx, h.roomName(ctx, roomID))
-		if err != nil {
-			return nil, err
-		}
+		seen := map[string]bool{}
 		out := []string{}
-		for _, s := range sessions {
-			if s.ID == sender {
-				continue
+		for _, roomID := range roomIDs {
+			sessions, err := h.Who(ctx, h.roomName(ctx, roomID))
+			if err != nil {
+				return nil, err
 			}
-			for _, t := range s.Tags {
-				if t == tag {
-					out = append(out, s.ID)
-					break
+			for _, s := range sessions {
+				if s.ID == sender || seen[s.ID] {
+					continue
+				}
+				for _, t := range s.Tags {
+					if t == tag {
+						seen[s.ID] = true
+						out = append(out, s.ID)
+						break
+					}
 				}
 			}
 		}
 		return out, nil
 
 	default:
-		// A direct session id. Verify it belongs to the room so a typo does
-		// not silently deliver nothing.
-		var id string
-		err := h.db.SQL().QueryRowContext(ctx,
-			`SELECT id FROM sessions WHERE id = ? AND room_id = ?`,
-			selector, roomID).Scan(&id)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, fmt.Errorf("send: no session %q in this room", selector)
+		// A direct session id. It must share at least one room with the
+		// sender, so a typo or an unrelated session is an error rather than
+		// a silent no-op.
+		if selector == sender {
+			return nil, nil
 		}
+		rows, err := h.db.SQL().QueryContext(ctx, `
+			SELECT s.id FROM sessions s
+			JOIN session_rooms sr ON sr.session_id = s.id
+			WHERE s.id = ? AND sr.room_id IN (`+placeholders(len(roomIDs))+`)`,
+			append([]any{selector}, anySlice(roomIDs)...)...)
 		if err != nil {
 			return nil, fmt.Errorf("resolve session selector: %w", err)
 		}
-		if id == sender {
-			return nil, nil
+		defer rows.Close()
+		var id string
+		if rows.Next() {
+			if err := rows.Scan(&id); err != nil {
+				return nil, fmt.Errorf("resolve session selector: %w", err)
+			}
+		}
+		rows.Close()
+		if id == "" {
+			return nil, fmt.Errorf("send: session %q is not in any room shared with you", selector)
 		}
 		return []string{id}, nil
 	}
+}
+
+// sessionsInRooms returns every session in the given rooms except one.
+func (h *Hub) sessionsInRooms(ctx context.Context, roomIDs []string, except string) ([]string, error) {
+	rows, err := h.db.SQL().QueryContext(ctx, `
+		SELECT DISTINCT s.id FROM sessions s
+		JOIN session_rooms sr ON sr.session_id = s.id
+		WHERE sr.room_id IN (`+placeholders(len(roomIDs))+`) AND s.id <> ?`,
+		append(anySlice(roomIDs), except)...)
+	if err != nil {
+		return nil, fmt.Errorf("query sessions: %w", err)
+	}
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan session: %w", err)
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
+}
+
+// placeholders returns n comma-separated SQL placeholders.
+func placeholders(n int) string {
+	if n == 0 {
+		return "NULL"
+	}
+	return strings.TrimSuffix(strings.Repeat("?,", n), ",")
+}
+
+// anySlice converts a string slice for variadic SQL arguments.
+//
+// The result has no spare capacity on purpose. A caller writing
+// append(anySlice(rooms), path) would otherwise write into that spare slot
+// and silently replace the first room, because append reuses the backing
+// array when capacity allows.
+func anySlice(v []string) []any {
+	out := make([]any, len(v), len(v))
+	for i := range v {
+		out[i] = v[i]
+	}
+	return out
 }
 
 func (h *Hub) querySessions(ctx context.Context, query string, args ...any) ([]string, error) {
@@ -231,34 +303,25 @@ func (h *Hub) querySessions(ctx context.Context, query string, args ...any) ([]s
 // matchLeasedPath matches a file selector against a leased path.
 //
 // Leases store absolute paths so two sessions cannot hold one file under
-// different names. A selector is usually written relative to the project, so
-// the pattern is tried against the full path, the path relative to the room's
+// different names. A selector is written relative to the project, so the
+// pattern is tried against the full path, the path relative to the holder's
 // working directory, and the bare base name.
-func (h *Hub) matchLeasedPath(ctx context.Context, roomID, pattern, leased string) bool {
+//
+// The holder's directory is the anchor, not the room's: a shared room can
+// contain sessions from several repositories, and "src/wire.go" means
+// different files to each of them.
+func matchLeasedPath(pattern, leased, holderCwd string) bool {
 	if globMatch(pattern, leased) {
 		return true
 	}
-	if cwd := h.roomCwd(ctx, roomID); cwd != "" {
-		if rel, err := filepath.Rel(cwd, leased); err == nil {
+	if holderCwd != "" {
+		if rel, err := filepath.Rel(holderCwd, leased); err == nil {
 			if globMatch(pattern, rel) {
 				return true
 			}
 		}
 	}
 	return globMatch(pattern, filepath.Base(leased))
-}
-
-// roomCwd returns the working directory most sessions in the room share, or
-// an empty string when there is no session.
-func (h *Hub) roomCwd(ctx context.Context, roomID string) string {
-	var cwd string
-	err := h.db.SQL().QueryRowContext(ctx, `
-		SELECT cwd FROM sessions WHERE room_id = ? ORDER BY joined_at ASC LIMIT 1`,
-		roomID).Scan(&cwd)
-	if err != nil {
-		return ""
-	}
-	return cwd
 }
 
 func (h *Hub) roomName(ctx context.Context, roomID string) string {

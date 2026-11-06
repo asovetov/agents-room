@@ -188,7 +188,8 @@ docs/                    protocol, architecture, harness setup
 2. **Rooms: repository room + shared rooms.** A session joins
    `repo:<basename>` automatically and may join any number of named shared
    rooms (`storefront`) to coordinate API contracts across related repositories.
-   One session, several rooms, one store.
+   One session, several rooms, one store. Implemented with a many-to-many
+   `session_rooms` table in schema version 3.
 3. **Autonomy is a negotiated, three-level setting**, not a boolean.
 
 ## Autonomy levels

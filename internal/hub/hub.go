@@ -54,9 +54,12 @@ func (h *Hub) Close() error { return h.db.Close() }
 func (h *Hub) Path() string { return h.db.Path() }
 
 // Session is a connected agent process.
+//
+// A session can be in several rooms at once: its repository room and any
+// number of shared rooms. Rooms lists all of them.
 type Session struct {
 	ID       string   `json:"id"`
-	Room     string   `json:"room"`
+	Rooms    []string `json:"rooms"`
 	Harness  string   `json:"harness"`
 	Cwd      string   `json:"cwd"`
 	PID      int      `json:"pid"`
@@ -79,8 +82,14 @@ const (
 )
 
 // JoinOptions describes a session joining a room.
+//
+// ExtraRooms are additional shared rooms the session joins alongside Room.
+// A session stays in its repository room and can be addressed from any
+// shared room it joined, which is how agents in different repositories
+// reach each other.
 type JoinOptions struct {
 	Room       string
+	ExtraRooms []string
 	Harness    string
 	HarnessKey string // stable id from the harness; makes a rejoin idempotent
 	Label      string
@@ -121,16 +130,28 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 	}
 
 	now := h.now()
-	roomID, err := h.ensureRoom(ctx, opt.Room, now)
-	if err != nil {
-		return nil, err
+	rooms := append([]string{opt.Room}, opt.ExtraRooms...)
+	roomIDs := make([]string, 0, len(rooms))
+	for _, name := range rooms {
+		id, err := h.ensureRoom(ctx, name, now)
+		if err != nil {
+			return nil, err
+		}
+		roomIDs = append(roomIDs, id)
 	}
-	cap, err := h.roomAutonomyCap(ctx, roomID)
-	if err != nil {
-		return nil, err
-	}
-	if opt.Autonomy > cap {
-		opt.Autonomy = cap
+
+	// The cap that applies is the strictest of the rooms the session is in:
+	// a shared room set to notify must not be bypassed by joining a
+	// repository room set to wake.
+	effective := opt.Autonomy
+	for _, id := range roomIDs {
+		c, err := h.roomAutonomyCap(ctx, id)
+		if err != nil {
+			return nil, err
+		}
+		if c < effective {
+			effective = c
+		}
 	}
 
 	if opt.Tags == nil {
@@ -141,61 +162,75 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 		return nil, fmt.Errorf("encode tags: %w", err)
 	}
 
+	var sessionID string
 	if opt.HarnessKey != "" {
-		if existing, err := h.sessionByHarnessKey(ctx, roomID, opt.Harness, opt.HarnessKey); err != nil {
+		existing, err := h.sessionByHarnessKey(ctx, opt.Harness, opt.HarnessKey)
+		if err != nil {
 			return nil, err
-		} else if existing != nil {
-			_, err := h.db.SQL().ExecContext(ctx, `
+		}
+		if existing != nil {
+			sessionID = existing.ID
+			if _, err := h.db.SQL().ExecContext(ctx, `
 				UPDATE sessions
 				SET cwd = ?, pid = ?, label = ?, tags = ?, autonomy = ?, last_seen = ?
 				WHERE id = ?`,
-				opt.Cwd, opt.PID, opt.Label, string(tags), opt.Autonomy, now, existing.ID)
-			if err != nil {
+				opt.Cwd, opt.PID, opt.Label, string(tags), effective, now, sessionID); err != nil {
 				return nil, fmt.Errorf("update session: %w", err)
 			}
-			if err := h.appendEvent(ctx, roomID, "session.rejoin", map[string]any{
-				"session": existing.ID, "harness": opt.Harness,
-			}); err != nil {
-				return nil, err
-			}
-			existing.Cwd, existing.PID, existing.Label = opt.Cwd, opt.PID, opt.Label
-			existing.Tags, existing.Autonomy, existing.LastSeen = opt.Tags, opt.Autonomy, now
-			return existing, nil
 		}
 	}
 
-	id, err := newID()
-	if err != nil {
-		return nil, err
+	if sessionID == "" {
+		sessionID, err = newID()
+		if err != nil {
+			return nil, err
+		}
+		// room_id is the legacy single-room column. It keeps the primary
+		// room for a downgrade; memberships live in session_rooms.
+		_, err = h.db.SQL().ExecContext(ctx, `
+			INSERT INTO sessions
+				(id, room_id, harness, cwd, pid, label, tags, autonomy, joined_at, last_seen, harness_key)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			sessionID, roomIDs[0], opt.Harness, opt.Cwd, opt.PID, opt.Label,
+			string(tags), effective, now, now, opt.HarnessKey)
+		if err != nil {
+			return nil, fmt.Errorf("insert session: %w", err)
+		}
 	}
 
-	_, err = h.db.SQL().ExecContext(ctx, `
-		INSERT INTO sessions
-			(id, room_id, harness, cwd, pid, label, tags, autonomy, joined_at, last_seen, harness_key)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, roomID, opt.Harness, opt.Cwd, opt.PID, opt.Label, string(tags),
-		opt.Autonomy, now, now, opt.HarnessKey)
-	if err != nil {
-		return nil, fmt.Errorf("insert session: %w", err)
+	for i, id := range roomIDs {
+		if _, err := h.db.SQL().ExecContext(ctx, `
+			INSERT INTO session_rooms (session_id, room_id, joined_at)
+			VALUES (?, ?, ?)
+			ON CONFLICT(session_id, room_id) DO NOTHING`,
+			sessionID, id, now); err != nil {
+			return nil, fmt.Errorf("join room %q: %w", rooms[i], err)
+		}
 	}
 
-	if err := h.appendEvent(ctx, roomID, "session.join", map[string]any{
-		"session": id, "harness": opt.Harness, "label": opt.Label,
-		"autonomy": opt.Autonomy,
-	}); err != nil {
-		return nil, err
+	kind := "session.join"
+	if opt.HarnessKey != "" {
+		kind = "session.rejoin"
+	}
+	for _, id := range roomIDs {
+		if err := h.appendEvent(ctx, id, kind, map[string]any{
+			"session": sessionID, "harness": opt.Harness, "label": opt.Label,
+			"autonomy": effective,
+		}); err != nil {
+			return nil, err
+		}
 	}
 
 	return &Session{
-		ID: id, Room: opt.Room, Harness: opt.Harness, Cwd: opt.Cwd,
-		PID: opt.PID, Label: opt.Label, Tags: opt.Tags, Autonomy: opt.Autonomy,
+		ID: sessionID, Rooms: rooms, Harness: opt.Harness, Cwd: opt.Cwd,
+		PID: opt.PID, Label: opt.Label, Tags: opt.Tags, Autonomy: effective,
 		JoinedAt: now, LastSeen: now,
 	}, nil
 }
 
-// Leave removes a session and releases every lease it holds.
+// Leave removes a session from every room and releases every lease it holds.
 func (h *Hub) Leave(ctx context.Context, sessionID string) error {
-	roomID, err := h.sessionRoom(ctx, sessionID)
+	roomIDs, err := h.sessionRoomIDs(ctx, sessionID)
 	if err != nil {
 		return err
 	}
@@ -207,7 +242,44 @@ func (h *Hub) Leave(ctx context.Context, sessionID string) error {
 		`DELETE FROM leases WHERE owner = ?`, sessionID); err != nil {
 		return fmt.Errorf("release leases: %w", err)
 	}
-	return h.appendEvent(ctx, roomID, "session.leave", map[string]any{"session": sessionID})
+	for _, id := range roomIDs {
+		if err := h.appendEvent(ctx, id, "session.leave", map[string]any{"session": sessionID}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// LeaveRoom removes a session from one room and keeps it in the others.
+//
+// Leases the session holds in that room are released with it. This is how an
+// agent leaves a shared room when its part of the contract work is done
+// without dropping out of its own repository room.
+func (h *Hub) LeaveRoom(ctx context.Context, sessionID, room string) error {
+	roomID, err := h.roomID(ctx, room)
+	if errors.Is(err, store.ErrNotFound) {
+		return fmt.Errorf("leave: no room %q", room)
+	}
+	if err != nil {
+		return fmt.Errorf("leave: %w", err)
+	}
+	res, err := h.db.SQL().ExecContext(ctx,
+		`DELETE FROM session_rooms WHERE session_id = ? AND room_id = ?`, sessionID, roomID)
+	if err != nil {
+		return fmt.Errorf("leave: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("leave: %w", err)
+	}
+	if n == 0 {
+		return fmt.Errorf("leave: session is not in room %q", room)
+	}
+	if _, err := h.db.SQL().ExecContext(ctx,
+		`DELETE FROM leases WHERE owner = ? AND room_id = ?`, sessionID, roomID); err != nil {
+		return fmt.Errorf("leave: release leases: %w", err)
+	}
+	return h.appendEvent(ctx, roomID, "session.leave_room", map[string]any{"session": sessionID})
 }
 
 // Who lists the sessions in a room, most recently seen first.
@@ -223,8 +295,12 @@ func (h *Hub) Who(ctx context.Context, room string) ([]Session, error) {
 	}
 
 	rows, err := h.db.SQL().QueryContext(ctx, `
-		SELECT id, harness, cwd, pid, label, tags, autonomy, joined_at, last_seen
-		FROM sessions WHERE room_id = ? ORDER BY last_seen DESC`, roomID)
+		SELECT s.id, s.harness, s.cwd, s.pid, s.label, s.tags, s.autonomy,
+		       s.joined_at, s.last_seen
+		FROM sessions s
+		JOIN session_rooms sr ON sr.session_id = s.id
+		WHERE sr.room_id = ?
+		ORDER BY s.last_seen DESC`, roomID)
 	if err != nil {
 		return nil, fmt.Errorf("query sessions: %w", err)
 	}
@@ -232,7 +308,7 @@ func (h *Hub) Who(ctx context.Context, room string) ([]Session, error) {
 
 	out := []Session{}
 	for rows.Next() {
-		s := Session{Room: room}
+		s := Session{Rooms: []string{room}}
 		var tags string
 		if err := rows.Scan(&s.ID, &s.Harness, &s.Cwd, &s.PID, &s.Label,
 			&tags, &s.Autonomy, &s.JoinedAt, &s.LastSeen); err != nil {
@@ -244,17 +320,77 @@ func (h *Hub) Who(ctx context.Context, room string) ([]Session, error) {
 		}
 		out = append(out, s)
 	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	// Fill in every room each session is in, so a caller sees the full
+	// picture rather than only the room it asked about.
+	for i := range out {
+		if rooms, err := h.RoomsOf(ctx, out[i].ID); err == nil {
+			out[i].Rooms = rooms
+		}
+	}
+	return out, nil
+}
+
+// RoomOf returns the session's repository room: the first room it joined.
+// Use RoomsOf for the full list.
+func (h *Hub) RoomOf(ctx context.Context, sessionID string) string {
+	rooms, err := h.RoomsOf(ctx, sessionID)
+	if err != nil || len(rooms) == 0 {
+		return ""
+	}
+	return rooms[0]
+}
+
+// RoomsOf returns every room a session belongs to, oldest membership first.
+func (h *Hub) RoomsOf(ctx context.Context, sessionID string) ([]string, error) {
+	rows, err := h.db.SQL().QueryContext(ctx, `
+		SELECT r.name
+		FROM session_rooms sr
+		JOIN rooms r ON r.id = sr.room_id
+		WHERE sr.session_id = ?
+		ORDER BY sr.joined_at ASC, r.name ASC`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("list session rooms: %w", err)
+	}
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			return nil, fmt.Errorf("scan room: %w", err)
+		}
+		out = append(out, name)
+	}
 	return out, rows.Err()
 }
 
-// RoomOf returns the room name a session belongs to, or an empty string when
-// the session is unknown.
-func (h *Hub) RoomOf(ctx context.Context, sessionID string) string {
-	roomID, err := h.sessionRoom(ctx, sessionID)
+// sessionRoomIDs returns the room ids a session belongs to.
+func (h *Hub) sessionRoomIDs(ctx context.Context, sessionID string) ([]string, error) {
+	rows, err := h.db.SQL().QueryContext(ctx,
+		`SELECT room_id FROM session_rooms WHERE session_id = ?`, sessionID)
 	if err != nil {
-		return ""
+		return nil, fmt.Errorf("list session rooms: %w", err)
 	}
-	return h.roomName(ctx, roomID)
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan room id: %w", err)
+		}
+		out = append(out, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(out) == 0 {
+		return nil, store.ErrNotFound
+	}
+	return out, nil
 }
 
 // PruneStale removes sessions that have not been seen for longer than maxAge
@@ -430,14 +566,18 @@ func (h *Hub) RoomAutonomyCap(ctx context.Context, room string) (int, error) {
 
 // sessionByHarnessKey finds a session previously joined under the same
 // harness key, or nil when there is none.
-func (h *Hub) sessionByHarnessKey(ctx context.Context, roomID, harness, key string) (*Session, error) {
+func (h *Hub) sessionByHarnessKey(ctx context.Context, harness, key string) (*Session, error) {
 	s := Session{Harness: harness}
 	var tags string
+	// A harness session is one chat regardless of how many rooms it joined,
+	// so the lookup is not scoped to a room. Rejoining from a second room
+	// must find the same session, not create a second one.
 	err := h.db.SQL().QueryRowContext(ctx, `
 		SELECT id, cwd, pid, label, tags, autonomy, joined_at, last_seen
 		FROM sessions
-		WHERE room_id = ? AND harness = ? AND harness_key = ?`,
-		roomID, harness, key).Scan(&s.ID, &s.Cwd, &s.PID, &s.Label, &tags,
+		WHERE harness = ? AND harness_key = ?
+		ORDER BY joined_at ASC LIMIT 1`,
+		harness, key).Scan(&s.ID, &s.Cwd, &s.PID, &s.Label, &tags,
 		&s.Autonomy, &s.JoinedAt, &s.LastSeen)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -447,14 +587,24 @@ func (h *Hub) sessionByHarnessKey(ctx context.Context, roomID, harness, key stri
 	}
 	s.Tags = []string{}
 	_ = json.Unmarshal([]byte(tags), &s.Tags)
-	s.Room = h.roomName(ctx, roomID)
+	rooms, err := h.RoomsOf(ctx, s.ID)
+	if err != nil {
+		return nil, err
+	}
+	s.Rooms = rooms
 	return &s, nil
 }
 
 // FindSession resolves a harness session key to a room session. Hooks use it
 // to map a harness session id to the room session id without knowing the
 // latter.
+//
+// When room is empty the session is looked up across every room, which is
+// what a hook needs: it may fire before the session has joined anything.
 func (h *Hub) FindSession(ctx context.Context, room, harness, key string) (*Session, error) {
+	if room == "" {
+		return h.sessionByHarnessKey(ctx, harness, key)
+	}
 	roomID, err := h.roomID(ctx, room)
 	if errors.Is(err, store.ErrNotFound) {
 		return nil, nil
@@ -462,7 +612,35 @@ func (h *Hub) FindSession(ctx context.Context, room, harness, key string) (*Sess
 	if err != nil {
 		return nil, err
 	}
-	return h.sessionByHarnessKey(ctx, roomID, harness, key)
+	s, err := h.sessionByHarnessKey(ctx, harness, key)
+	if err != nil || s == nil {
+		return s, err
+	}
+	for _, id := range mustRoomIDs(ctx, h, s.ID) {
+		if id == roomID {
+			return s, nil
+		}
+	}
+	return nil, nil
+}
+
+// mustRoomIDs is a small helper: membership ids for a session, ignoring the
+// error because the caller already has the session row.
+func mustRoomIDs(ctx context.Context, h *Hub, sessionID string) []string {
+	rows, err := h.db.SQL().QueryContext(ctx,
+		`SELECT room_id FROM session_rooms WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return nil
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var id string
+		if rows.Scan(&id) == nil {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 // RepoRoom derives the default room name from a directory: the git top level

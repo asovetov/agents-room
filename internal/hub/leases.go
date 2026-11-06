@@ -69,22 +69,32 @@ func (h *Hub) Claim(ctx context.Context, sessionID, path string, ttlSeconds int6
 		return nil, fmt.Errorf("claim: mode must be %q or %q", ModeExclusive, ModeShared)
 	}
 
-	roomID, err := h.sessionRoom(ctx, sessionID)
+	// A lease lives in the session's repository room. Contention is checked
+	// across every room the session is in, so two agents that share only a
+	// shared room still cannot hold one file at the same time.
+	roomIDs, err := h.sessionRoomIDs(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("claim: %w", err)
 	}
+	roomID := roomIDs[0]
 	now := h.now()
 
 	var denied *Lease
 	err = h.db.Immediate(ctx, func(conn *sql.Conn) error {
 		if _, err := conn.ExecContext(ctx,
-			`DELETE FROM leases WHERE room_id = ? AND expires_at <= ?`, roomID, now); err != nil {
+			`DELETE FROM leases WHERE expires_at <= ?`, now); err != nil {
 			return fmt.Errorf("claim: sweep expired: %w", err)
 		}
 
+		// Contention is between sessions, not between room rows: a lease
+		// lives in the holder's repository room, so matching on the
+		// claimant's rooms would miss a holder that shares only a shared
+		// room. Join through session_rooms instead.
 		rows, err := conn.QueryContext(ctx, `
-			SELECT owner, mode FROM leases WHERE room_id = ? AND path = ?`,
-			roomID, path)
+			SELECT l.owner, l.mode FROM leases l
+			JOIN session_rooms sr ON sr.session_id = l.owner
+			WHERE sr.room_id IN (`+placeholders(len(roomIDs))+`) AND l.path = ?`,
+			append(anySlice(roomIDs), path)...)
 		if err != nil {
 			return fmt.Errorf("claim: query holders: %w", err)
 		}
@@ -223,22 +233,24 @@ func (h *Hub) Check(ctx context.Context, sessionID, path string) (*Lease, error)
 	if err != nil {
 		return nil, fmt.Errorf("check: %w", err)
 	}
-	roomID, err := h.sessionRoom(ctx, sessionID)
+	roomIDs, err := h.sessionRoomIDs(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("check: %w", err)
 	}
-	var owner string
+	var owner, leaseRoom string
 	err = h.db.SQL().QueryRowContext(ctx, `
-		SELECT owner FROM leases
-		WHERE room_id = ? AND path = ? AND expires_at > ?
-		ORDER BY acquired_at ASC LIMIT 1`, roomID, path, h.now()).Scan(&owner)
+		SELECT l.owner, l.room_id FROM leases l
+		JOIN session_rooms sr ON sr.session_id = l.owner
+		WHERE sr.room_id IN (`+placeholders(len(roomIDs))+`) AND l.path = ? AND l.expires_at > ?
+		ORDER BY l.acquired_at ASC LIMIT 1`,
+		append(anySlice(roomIDs), path, h.now())...).Scan(&owner, &leaseRoom)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("check: %w", err)
 	}
-	return h.leaseFor(ctx, roomID, path, owner)
+	return h.leaseFor(ctx, leaseRoom, path, owner)
 }
 
 // List returns every live lease in a room.

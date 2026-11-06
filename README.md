@@ -18,6 +18,11 @@ It also delivers messages addressed by *what* rather than *who*:
 `file:src/api/**` reaches whoever holds those files, `tag:protocol`
 reaches everyone working on the protocol.
 
+A session can be in several rooms at once: its repository room plus any
+number of shared rooms. Agents in `gcs`, `link` and `storefront-web` that
+join `shared:storefront` can message each other and contend for the same
+files, which is what makes contract work across repositories possible.
+
 ## What it is not
 
 - Not a chat platform. Lasting decisions belong in your long-term memory tool.
@@ -96,6 +101,7 @@ Setup per harness is in [`docs/harness-setup.md`](docs/harness-setup.md).
 
 ```bash
 agents-room join --label "users API" --tag protocol --autonomy 1 --key "$SESSION_ID"
+agents-room join --also shared:storefront          # reach agents in sibling repos
 agents-room who
 agents-room cap --set 1
 agents-room lease claim --session <id> --path src/api/users.go --ttl 600
@@ -105,9 +111,9 @@ agents-room watch
 ```
 
 The same operations are MCP tools: `room_join`, `room_leave`, `room_who`,
-`room_set_autonomy_cap`, `msg_send`, `msg_recv`, `msg_ack`, `msg_unread`,
-`lease_claim`, `lease_renew`, `lease_release`, `lease_check`, `lease_list`,
-`note_read`, `drift_check`. The full reference is in
+`room_leave_room`, `room_set_autonomy_cap`, `msg_send`, `msg_recv`, `msg_ack`,
+`msg_unread`, `lease_claim`, `lease_renew`, `lease_release`, `lease_check`,
+`lease_list`, `note_read`, `drift_check`. The full reference is in
 [`docs/protocol.md`](docs/protocol.md).
 
 ## Status
