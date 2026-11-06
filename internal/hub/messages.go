@@ -34,6 +34,10 @@ type Message struct {
 	CreatedAt int64  `json:"created_at"`
 	ExpiresAt *int64 `json:"expires_at,omitempty"`
 	State     string `json:"state"`
+	// Recipients is how many sessions the selector matched. Zero means the
+	// message is stored but nobody will ever read it, which a sender needs
+	// to know before it stops paying attention.
+	Recipients int `json:"recipients"`
 }
 
 // SendOptions describes a message to send.
@@ -125,7 +129,7 @@ func (h *Hub) Send(ctx context.Context, opt SendOptions) (*Message, error) {
 	return &Message{
 		ID: id, Sender: opt.From, Selector: opt.To, Subject: opt.Subject,
 		Body: opt.Body, ReplyTo: opt.ReplyTo, CreatedAt: now,
-		ExpiresAt: expires, State: StateStored,
+		ExpiresAt: expires, State: StateStored, Recipients: len(recipients),
 	}, nil
 }
 
@@ -331,6 +335,18 @@ func (h *Hub) roomName(ctx context.Context, roomID string) string {
 		return ""
 	}
 	return name
+}
+
+// roomNames resolves ids to names for an error message, skipping ids that
+// no longer exist rather than failing the send twice.
+func (h *Hub) roomNames(ctx context.Context, roomIDs []string) []string {
+	out := make([]string, 0, len(roomIDs))
+	for _, id := range roomIDs {
+		if name := h.roomName(ctx, id); name != "" {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // Recv returns the unread messages for a session and marks them read.

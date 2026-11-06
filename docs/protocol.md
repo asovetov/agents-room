@@ -32,7 +32,13 @@ server-initiated requests, and asks servers to mint a handle the model passes
 back; this follows that shape.
 
 A session's `last_seen` updates whenever it calls a tool, so `room_who` shows
-who is alive.
+who is alive. The MCP server does this in one middleware over `tools/call`,
+so a tool added later inherits it without its own `Touch` call.
+
+A shared room is spelled `shared:<name>`. An extra room named without a
+prefix gets one at join time, because `--also storefront` and
+`AGENTS_ROOM_SHARED=storefront` are the same room to a human and were two
+rows to the store, each holding half the membership.
 
 Membership is many-to-many: `session_rooms` holds one row per (session, room).
 A chat in `gcs` that also joined `shared:storefront` is the same session in
@@ -81,6 +87,12 @@ treats the backslash as the separator, so `src/*.go` would match
 `file:` and `tag:` exist because the useful question is rarely "what is this
 session called". It is "who is touching this file" and "who is working on the
 protocol".
+
+A selector that matches nobody is not an error: a broadcast in a room of one,
+or a `file:` selector on a path only the sender holds, is a legitimate send
+with zero recipients. The count is reported back instead of being hidden, so
+a sender does not mistake a stored message for a delivered one. The CLI
+prints a warning on stderr; `msg_send` returns `recipients`.
 
 ## Delivery states
 
@@ -145,7 +157,7 @@ for it. Re-read before editing.
 | `room_leave_room` | `session_id`, `room` | nothing, stays in the rest |
 | `room_who` | `session_id?`, `room?` | sessions |
 | `room_set_autonomy_cap` | `session_id?`, `room?`, `autonomy` | `room`, `autonomy` |
-| `msg_send` | `session_id`, `to`, `subject?`, `body?`, `reply_to?`, `ttl_s?` | `message_id` |
+| `msg_send` | `session_id`, `to`, `subject?`, `body?`, `reply_to?`, `ttl_s?` | `message_id`, `recipients` |
 | `msg_recv` | `session_id`, `limit?` | messages, marked read |
 | `msg_ack` | `session_id`, `message_id` | nothing |
 | `msg_unread` | `session_id` | `count` |

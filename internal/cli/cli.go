@@ -298,6 +298,9 @@ func runSend(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return fail(stderr, err)
 	}
 	fmt.Fprintln(stdout, m.ID)
+	if m.Recipients == 0 {
+		fmt.Fprintf(stderr, "warning: %s matched no recipient; the message is stored but nobody will read it\n", m.Selector)
+	}
 	return 0
 }
 

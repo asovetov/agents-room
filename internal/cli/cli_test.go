@@ -2,11 +2,14 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/asovetov/agents-room/internal/store"
 )
 
 // setup points the store at a temporary file and returns a runner that
@@ -176,6 +179,52 @@ func TestPathCommand(t *testing.T) {
 	}
 	if !strings.HasSuffix(strings.TrimSpace(out), "room.db") {
 		t.Fatalf("path = %q", out)
+	}
+}
+
+// A send whose selector matches nobody still succeeds, but it must say so on
+// stderr rather than look like a delivery.
+func TestSendWarnsWhenNobodyMatches(t *testing.T) {
+	run := setup(t)
+	_, aOut, _ := run("join", "--room", "repo:x", "--key", "a")
+	a := strings.TrimSpace(aOut)
+
+	code, _, errOut := run("send", "--session", a, "--to", "tag:nobody", "--body", "x")
+	if code != 0 {
+		t.Fatalf("send exit %d: %s", code, errOut)
+	}
+	if !strings.Contains(errOut, "matched no recipient") {
+		t.Fatalf("no warning for a message nobody can read; stderr = %q", errOut)
+	}
+}
+
+// doctor has to name a room that exists both with and without the shared:
+// prefix, because a session in the wrong one is unreachable from the right
+// one and nothing merges them automatically.
+func TestDoctorReportsSplitSharedRoom(t *testing.T) {
+	run := setup(t)
+	run("join", "--room", "repo:x", "--also", "shared:storefront", "--key", "a")
+
+	// Join normalises the prefix, so the split can only be built by hand the
+	// way the old binary left it behind: a bare room beside the shared one.
+	db, err := store.Open(os.Getenv("AGENTS_ROOM_DB"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.SQL().ExecContext(context.Background(),
+		`INSERT INTO rooms (id, name, created_at) VALUES ('bare1', 'storefront', 1)`); err != nil {
+		t.Fatalf("insert bare room: %v", err)
+	}
+	if _, err := db.SQL().ExecContext(context.Background(),
+		`INSERT INTO session_rooms (session_id, room_id, joined_at)
+		 SELECT id, 'bare1', 1 FROM sessions LIMIT 1`); err != nil {
+		t.Fatalf("attach session to bare room: %v", err)
+	}
+
+	_, out, _ := run("doctor")
+	if !strings.Contains(out, "storefront and shared:storefront are two rooms") {
+		t.Fatalf("doctor did not report the split room; output:\n%s", out)
 	}
 }
 

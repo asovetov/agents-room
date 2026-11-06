@@ -217,6 +217,11 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		} else {
 			line(true, "room %s has %d session(s)", room, len(sessions))
 		}
+		for _, split := range splitSharedRooms(ctx, h) {
+			line(false, "%s and %s are two rooms; %d session(s) sit in the unprefixed one and are unreachable from the other. "+
+				"Each of them rejoins once, then runs `agents-room leave --session <id> --room %s`",
+				split.Bare, split.Shared, split.Stranded, split.Bare)
+		}
 	}
 
 	fmt.Fprintln(stdout, "\nHarness configuration")
@@ -262,6 +267,38 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	fmt.Fprintf(stdout, "%d problem(s) found\n", problems)
 	return 1
+}
+
+// splitSharedRoom is one unprefixed room that duplicates a shared one.
+type splitSharedRoom struct {
+	Bare     string
+	Shared   string
+	Stranded int
+}
+
+// splitSharedRooms finds rooms that exist both as "name" and "shared:name".
+//
+// Before join normalised the prefix, `--also storefront` created a second room
+// beside `shared:storefront`. Nothing merges them: a session in the wrong one
+// is invisible in the right one, so the operator has to be told which name is
+// the orphan and how many sessions sit in it.
+func splitSharedRooms(ctx context.Context, h *hub.Hub) []splitSharedRoom {
+	var out []splitSharedRoom
+	for _, name := range h.RoomNames(ctx) {
+		if strings.Contains(name, ":") {
+			continue
+		}
+		shared := "shared:" + name
+		if !h.HasRoom(ctx, shared) {
+			continue
+		}
+		sessions, err := h.Who(ctx, name)
+		if err != nil || len(sessions) == 0 {
+			continue
+		}
+		out = append(out, splitSharedRoom{Bare: name, Shared: shared, Stranded: len(sessions)})
+	}
+	return out
 }
 
 func storeVersion(h *hub.Hub) (int, error) {
