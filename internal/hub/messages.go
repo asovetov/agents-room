@@ -429,6 +429,88 @@ func (h *Hub) Recv(ctx context.Context, sessionID string, limit int) ([]Message,
 	return out, nil
 }
 
+// Sent is one message a session sent, with what became of it per recipient.
+type Sent struct {
+	ID         string `json:"id"`
+	Subject    string `json:"subject"`
+	To         string `json:"to"`
+	CreatedAt  int64  `json:"created_at"`
+	Recipients int    `json:"recipients"`
+	// States counts deliveries by state, so a sender can see at a glance
+	// whether anyone read what it sent.
+	States map[string]int `json:"states"`
+	// Pending is recipients whose delivery has not reached a terminal state:
+	// the message is still waiting on them.
+	Pending int `json:"pending"`
+}
+
+// SentMessages lists what a session sent, newest first, with delivery states.
+//
+// A sender had no way to find out what happened after msg_send returned a
+// recipient count. A message could sit unread forever, or go to a session
+// that died, and the sender never learned; this is the read side of that.
+func (h *Hub) SentMessages(ctx context.Context, sessionID string, limit int) ([]Sent, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := h.db.SQL().QueryContext(ctx, `
+		SELECT id, subject, selector, created_at FROM messages
+		WHERE sender = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`, sessionID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("sent: query: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Sent{}
+	for rows.Next() {
+		var s Sent
+		if err := rows.Scan(&s.ID, &s.Subject, &s.To, &s.CreatedAt); err != nil {
+			return nil, fmt.Errorf("sent: scan: %w", err)
+		}
+		out = append(out, s)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("sent: rows: %w", err)
+	}
+
+	for i := range out {
+		states, err := h.deliveryStates(ctx, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].States = states
+		for _, n := range states {
+			out[i].Recipients += n
+		}
+		for _, state := range []string{StateStored, StateOffered, StateAccepted} {
+			out[i].Pending += states[state]
+		}
+	}
+	return out, nil
+}
+
+// deliveryStates counts one message's deliveries by state.
+func (h *Hub) deliveryStates(ctx context.Context, messageID string) (map[string]int, error) {
+	rows, err := h.db.SQL().QueryContext(ctx, `
+		SELECT state, COUNT(*) FROM deliveries
+		WHERE message_id = ? GROUP BY state`, messageID)
+	if err != nil {
+		return nil, fmt.Errorf("delivery states: %w", err)
+	}
+	defer rows.Close()
+
+	out := map[string]int{}
+	for rows.Next() {
+		var state string
+		var n int
+		if err := rows.Scan(&state, &n); err != nil {
+			return nil, fmt.Errorf("delivery states: scan: %w", err)
+		}
+		out[state] = n
+	}
+	return out, rows.Err()
+}
+
 // Unread counts messages waiting for a session, including expired ones not
 // yet swept. Used by the wake hooks, which must stay cheap.
 func (h *Hub) Unread(ctx context.Context, sessionID string) (int, error) {

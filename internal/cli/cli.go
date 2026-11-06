@@ -40,6 +40,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runSend(ctx, rest, stdout, stderr)
 	case "recv":
 		return runRecv(ctx, rest, stdout, stderr)
+	case "sent":
+		return runSent(ctx, rest, stdout, stderr)
 	case "ack":
 		return runAck(ctx, rest, stdout, stderr)
 	case "lease":
@@ -88,6 +90,7 @@ Usage:
   agents-room cap    [--room NAME] [--set 0|1|2]
   agents-room send   --session ID --to SELECTOR [--subject TEXT] [--body TEXT] [--ttl SECONDS]
   agents-room recv   --session ID [--limit N] [--json]
+  agents-room sent   --session ID [--limit N] [--json]
   agents-room ack    --session ID --message ID
   agents-room lease  claim|renew|release|check|list --session ID [--path PATH] [--ttl SECONDS] [--mode exclusive|shared]
   agents-room drift  note|check --session ID --path PATH
@@ -344,6 +347,67 @@ func runRecv(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			m.Sender, time.Unix(m.CreatedAt, 0).Format(time.RFC3339), m.Subject, m.Body)
 	}
 	return 0
+}
+
+func runSent(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("sent", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	session := fs.String("session", "", "session id")
+	limit := fs.Int("limit", 20, "maximum messages")
+	asJSON := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if *session == "" {
+		return fail(stderr, fmt.Errorf("--session is required"))
+	}
+
+	h, code := open(stderr)
+	if code != 0 {
+		return code
+	}
+	defer h.Close()
+
+	sent, err := h.SentMessages(ctx, *session, *limit)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	if *asJSON {
+		return writeJSON(stdout, stderr, sent)
+	}
+	if len(sent) == 0 {
+		fmt.Fprintln(stdout, "nothing sent from this session")
+		return 0
+	}
+	for _, s := range sent {
+		fmt.Fprintf(stdout, "%s  %s\n  to %s at %s: %s\n",
+			s.ID, s.Subject, s.To,
+			time.Unix(s.CreatedAt, 0).Format(time.RFC3339),
+			describeStates(s.States))
+		if s.Pending > 0 {
+			fmt.Fprintf(stdout, "  %d recipient(s) have not read it yet\n", s.Pending)
+		}
+	}
+	return 0
+}
+
+// describeStates renders a delivery-state tally in a fixed order, so two runs
+// of the same data read the same way.
+func describeStates(states map[string]int) string {
+	if len(states) == 0 {
+		return "no recipients"
+	}
+	order := []string{
+		hub.StateStored, hub.StateOffered, hub.StateAccepted,
+		hub.StateRead, hub.StateAcked, hub.StateExpired, hub.StateUndeliverable,
+	}
+	var parts []string
+	for _, state := range order {
+		if n := states[state]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, state))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func runAck(ctx context.Context, args []string, stdout, stderr io.Writer) int {

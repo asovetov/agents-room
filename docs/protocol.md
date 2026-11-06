@@ -120,6 +120,11 @@ a sender does not mistake a stored message for a delivered one. The CLI
 prints a warning on stderr; `msg_send` returns `recipients`, and `msg_recv`
 reports the same count for the message it just delivered.
 
+Knowing how many were addressed is not the same as knowing whether they read
+it. `msg_sent` (and `agents-room sent`) lists what a session sent with a
+per-state tally and a `pending` count, so a sender can tell a slow reader from
+a message nobody ever picked up.
+
 ## Delivery states
 
 Each recipient gets its own row. State only moves forward.
@@ -207,6 +212,7 @@ for it. Re-read before editing.
 | `msg_recv` | `session_id`, `limit?` | messages, marked read |
 | `msg_ack` | `session_id`, `message_id` | nothing |
 | `msg_unread` | `session_id` | `count` |
+| `msg_sent` | `session_id`, `limit?` | `messages`: each with `states` and `pending` |
 | `lease_claim` | `session_id`, `path`, `ttl_s?`, `mode?` | `ok`, `holder`, `reason` |
 | `lease_renew` | `session_id`, `path`, `ttl_s?` | the renewed lease |
 | `lease_release` | `session_id`, `path` | nothing |

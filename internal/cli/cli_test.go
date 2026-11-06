@@ -340,3 +340,72 @@ func TestJoinWarningGoesToStderr(t *testing.T) {
 		t.Fatalf("stderr = %q, want the warning", errOut)
 	}
 }
+
+// A sender had no way to learn what became of a message after send returned.
+// `sent` is that read side: what went out, and how far it got.
+func TestSentReportsWhatBecameOfAMessage(t *testing.T) {
+	run := setup(t)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	_, aOut, _ := run("join", "--room", "repo:x", "--key", "a")
+	_, bOut, _ := run("join", "--room", "repo:x", "--key", "b")
+	_, cOut, _ := run("join", "--room", "repo:x", "--key", "c")
+	a, b, c := strings.TrimSpace(aOut), strings.TrimSpace(bOut), strings.TrimSpace(cOut)
+
+	run("send", "--session", a, "--to", b, "--subject", "one", "--body", "x")
+	run("send", "--session", a, "--to", c, "--subject", "two", "--body", "y")
+
+	// b reads its message, c does not.
+	run("recv", "--session", b)
+
+	code, out, errOut := run("sent", "--session", a, "--json")
+	if code != 0 {
+		t.Fatalf("sent exit %d: %s", code, errOut)
+	}
+	var sent []map[string]any
+	if err := json.Unmarshal([]byte(out), &sent); err != nil {
+		t.Fatalf("sent output is not JSON: %v\n%s", err, out)
+	}
+	if len(sent) != 2 {
+		t.Fatalf("sent lists %d messages, want 2", len(sent))
+	}
+
+	bySubject := map[string]map[string]any{}
+	for _, s := range sent {
+		bySubject[s["subject"].(string)] = s
+	}
+	// Newest first.
+	if sent[0]["subject"] != "two" {
+		t.Fatalf("sent order = %v, want newest first", sent[0]["subject"])
+	}
+	if states := bySubject["one"]["states"].(map[string]any); states["read"] != float64(1) {
+		t.Fatalf("message one states = %v, want one read", states)
+	}
+	if p := bySubject["one"]["pending"]; p != float64(0) {
+		t.Fatalf("message one pending = %v, want 0", p)
+	}
+	if states := bySubject["two"]["states"].(map[string]any); states["stored"] != float64(1) {
+		t.Fatalf("message two states = %v, want one stored", states)
+	}
+	if p := bySubject["two"]["pending"]; p != float64(1) {
+		t.Fatalf("message two pending = %v, want 1", p)
+	}
+}
+
+// A message nobody was matched to is still visible to its sender, and says so
+// plainly rather than reporting a recipient.
+func TestSentShowsAMessageWithNoRecipients(t *testing.T) {
+	run := setup(t)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	_, aOut, _ := run("join", "--room", "repo:x", "--key", "a")
+	a := strings.TrimSpace(aOut)
+
+	run("send", "--session", a, "--to", "tag:nobody", "--subject", "lost", "--body", "x")
+
+	code, out, errOut := run("sent", "--session", a)
+	if code != 0 {
+		t.Fatalf("sent exit %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, "no recipients") {
+		t.Fatalf("sent did not say the message reached nobody:\n%s", out)
+	}
+}

@@ -287,6 +287,52 @@ func registerMessageTools(s *mcp.Server, h *hub.Hub) {
 		}
 		return text(fmt.Sprintf("%d unread", n)), unreadOut{Count: n}, nil
 	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "msg_sent",
+		Description: "List what this session sent and what became of it: how many " +
+			"recipients have read it, and how many have not. Use it when a reply " +
+			"never arrived, to tell a slow reader from a message nobody picked up.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sentIn) (*mcp.CallToolResult, sentOut, error) {
+		sent, err := h.SentMessages(ctx, in.SessionID, in.Limit)
+		if err != nil {
+			return nil, sentOut{}, err
+		}
+		return text(describeSent(sent)), sentOut{Messages: sent}, nil
+	})
+}
+
+// describeSent renders the sent list as the few lines a model reads.
+func describeSent(sent []hub.Sent) string {
+	if len(sent) == 0 {
+		return "nothing sent from this session"
+	}
+	var b strings.Builder
+	for _, s := range sent {
+		fmt.Fprintf(&b, "%s  %s\n  to %s: %s\n", s.ID, s.Subject, s.To, statesLine(s.States))
+		if s.Pending > 0 {
+			fmt.Fprintf(&b, "  %d recipient(s) have not read it yet\n", s.Pending)
+		}
+	}
+	return b.String()
+}
+
+// statesLine renders a delivery-state tally in a fixed order.
+func statesLine(states map[string]int) string {
+	if len(states) == 0 {
+		return "no recipients"
+	}
+	order := []string{
+		hub.StateStored, hub.StateOffered, hub.StateAccepted,
+		hub.StateRead, hub.StateAcked, hub.StateExpired, hub.StateUndeliverable,
+	}
+	var parts []string
+	for _, state := range order {
+		if n := states[state]; n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", n, state))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 type recvIn struct {
@@ -305,6 +351,15 @@ type ackIn struct {
 
 type unreadOut struct {
 	Count int `json:"count"`
+}
+
+type sentIn struct {
+	SessionID string `json:"session_id" jsonschema:"your session id"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"maximum messages to list, newest first"`
+}
+
+type sentOut struct {
+	Messages []hub.Sent `json:"messages"`
 }
 
 // ---- lease tools ----

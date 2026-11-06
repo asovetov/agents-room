@@ -68,6 +68,7 @@ func TestToolsAreListed(t *testing.T) {
 		"room_join": false, "room_leave": false, "room_leave_room": false, "room_who": false,
 		"room_set_autonomy_cap": false,
 		"msg_send":              false, "msg_recv": false, "msg_ack": false, "msg_unread": false,
+		"msg_sent": false,
 		"lease_claim": false, "lease_renew": false, "lease_release": false,
 		"lease_check": false, "lease_list": false,
 		"note_read": false, "drift_check": false,
@@ -282,5 +283,43 @@ func TestToolErrorsAreReported(t *testing.T) {
 	}
 	if !res.IsError {
 		t.Fatal("sending from an unknown session was not reported as a tool error")
+	}
+}
+
+// A sender can find out what became of what it sent, which is the question a
+// missing reply leaves open.
+func TestMsgSentReportsDeliveryStates(t *testing.T) {
+	cs, _ := connect(t)
+	a := call(t, cs, "room_join", map[string]any{"room": "repo:x", "harness": "test", "harness_key": "a"})
+	b := call(t, cs, "room_join", map[string]any{"room": "repo:x", "harness": "test", "harness_key": "b"})
+	aID, _ := a["session_id"].(string)
+	bID, _ := b["session_id"].(string)
+
+	call(t, cs, "msg_send", map[string]any{
+		"session_id": aID, "to": bID, "subject": "ping", "body": "x",
+	})
+
+	// Before b reads it, the message is pending on one recipient.
+	sent := call(t, cs, "msg_sent", map[string]any{"session_id": aID})
+	msgs, _ := sent["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("msg_sent returned %d messages, want 1", len(msgs))
+	}
+	first, _ := msgs[0].(map[string]any)
+	if p, _ := first["pending"].(float64); p != 1 {
+		t.Fatalf("pending = %v, want 1", first["pending"])
+	}
+
+	call(t, cs, "msg_recv", map[string]any{"session_id": bID})
+
+	sent = call(t, cs, "msg_sent", map[string]any{"session_id": aID})
+	msgs, _ = sent["messages"].([]any)
+	first, _ = msgs[0].(map[string]any)
+	if p, _ := first["pending"].(float64); p != 0 {
+		t.Fatalf("pending after the recipient read it = %v, want 0", first["pending"])
+	}
+	states, _ := first["states"].(map[string]any)
+	if states["read"] != float64(1) {
+		t.Fatalf("states = %v, want one read", states)
 	}
 }
