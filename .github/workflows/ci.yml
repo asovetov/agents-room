@@ -31,4 +31,8 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
-      - run: make cross
+      - run: make cross VERSION=ci
+      # A cross-built binary that cannot even print its version is a broken
+      # release artifact, so run the host one.
+      - run: ./dist/agents-room-linux-amd64 version
+      - run: ./dist/agents-room-linux-amd64 help
