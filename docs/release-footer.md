@@ -33,11 +33,13 @@ The signing key is `9E7AB401595DFD94C63BFB1FEF3CC6A257F1562B`
 
 ## What is in the archive
 
-| Binary | Purpose |
+One binary per platform. It is also the MCP server and the harness hook:
+
+| Command | Purpose |
 |---|---|
-| `agents-room` | command line |
-| `agents-room-mcp` | MCP server for any harness |
-| `agents-room-hook` | harness hook for Claude Code, Codex and Hermes |
+| `agents-room` | the command line |
+| `agents-room mcp` | MCP server on stdio, for any harness |
+| `agents-room hook` | one harness hook event |
 
 Linux, macOS and Windows on amd64 and arm64. Static, no cgo, no external
 runtime.

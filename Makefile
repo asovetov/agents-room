@@ -2,7 +2,7 @@ VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 LDFLAGS := -s -w -X github.com/asovetov/agents-room/internal/cli.Version=$(VERSION) \
            -X github.com/asovetov/agents-room/internal/mcpserver.Version=$(VERSION)
 
-BINARIES := agents-room agents-room-mcp agents-room-hook
+BINARIES := agents-room
 
 .PHONY: all build install test race vet fmt cross clean
 
@@ -10,12 +10,10 @@ all: build
 
 build:
 	go build -trimpath -ldflags '$(LDFLAGS)' -o bin/agents-room ./cmd/agents-room
-	go build -trimpath -ldflags '$(LDFLAGS)' -o bin/agents-room-mcp ./cmd/agents-room-mcp
-	go build -trimpath -ldflags '$(LDFLAGS)' -o bin/agents-room-hook ./cmd/agents-room-hook
 
-# install puts the three binaries in GOBIN (or GOPATH/bin).
+# install puts the single binary in GOBIN (or GOPATH/bin).
 install:
-	go install -trimpath -ldflags '$(LDFLAGS)' ./cmd/...
+	go install -trimpath -ldflags '$(LDFLAGS)' ./cmd/agents-room
 
 test:
 	go test ./...

@@ -12,7 +12,9 @@ import (
 	"text/tabwriter"
 	"time"
 
+	"github.com/asovetov/agents-room/internal/hook"
 	"github.com/asovetov/agents-room/internal/hub"
+	"github.com/asovetov/agents-room/internal/mcpserver"
 )
 
 // Run dispatches a subcommand and returns a process exit code.
@@ -48,6 +50,10 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runWatch(ctx, rest, stdout, stderr)
 	case "prune":
 		return runPrune(ctx, rest, stdout, stderr)
+	case "mcp":
+		return runMCP(stdout, stderr)
+	case "hook":
+		return hook.Run(rest)
 	case "path":
 		return runPath(stdout, stderr)
 	case "version":
@@ -81,6 +87,9 @@ Usage:
   agents-room drift  note|check --session ID --path PATH
   agents-room watch  [--room NAME] [--interval SECONDS]
   agents-room prune  [--room NAME] [--older-than HOURS]
+  agents-room mcp                        serve the room over MCP on stdio
+  agents-room hook  --harness H --event E [--autonomy N] [--room NAME]
+                                         run one harness hook event
   agents-room path
 
 Selectors for --to: * | <session-id> | file:<glob> | tag:<tag>
@@ -525,6 +534,16 @@ func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		return fail(stderr, err)
 	}
 	fmt.Fprintf(stdout, "removed %d stale session(s) from %s\n", n, name)
+	return 0
+}
+
+// runMCP serves the room over MCP on stdio. Nothing may be written to
+// stdout except the protocol, so this takes no writer.
+func runMCP(stdout, stderr io.Writer) int {
+	if err := mcpserver.Serve(); err != nil {
+		fmt.Fprintf(stderr, "mcp: %v\n", err)
+		return 1
+	}
 	return 0
 }
 

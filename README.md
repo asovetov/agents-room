@@ -89,13 +89,18 @@ machine. `room_who` shows every session's effective level.
 ## Install
 
 ```bash
-go build -o bin/agents-room      ./cmd/agents-room
-go build -o bin/agents-room-mcp  ./cmd/agents-room-mcp
-go build -o bin/agents-room-hook ./cmd/agents-room-hook
+go install github.com/asovetov/agents-room/cmd/agents-room@latest
 ```
 
-Linux, macOS and Windows on amd64 and arm64. No cgo, no external runtime.
-Setup per harness is in [`docs/harness-setup.md`](docs/harness-setup.md).
+One static binary, Linux, macOS and Windows on amd64 and arm64. No cgo, no
+external runtime. Setup per harness is in
+[`docs/harness-setup.md`](docs/harness-setup.md).
+
+| Command | Purpose |
+|---|---|
+| `agents-room` | the command line |
+| `agents-room mcp` | MCP server on stdio, for any harness |
+| `agents-room hook` | one harness hook event |
 
 ## Use
 

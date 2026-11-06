@@ -1,11 +1,11 @@
-// Command agents-room-hook is the bridge between a harness event and the
-// room. It is installed as a hook command and decides, per event, whether to
-// join, nudge, or stay quiet.
+// Package hook is the bridge between a harness event and the room. It runs
+// as `agents-room hook` and decides, per event, whether to join, nudge, or
+// stay quiet.
 //
 // It prints to stdout only when the calling harness is meant to consume the
 // output. A SessionStart hook that prints would inject that text into the
 // model context, which is exactly what the design avoids.
-package main
+package hook
 
 import (
 	"context"
@@ -30,14 +30,20 @@ type hookInput struct {
 	Extra     map[string]any `json:"extra"`
 }
 
-func main() {
-	harness := flag.String("harness", "claude-code", "which harness is calling: claude-code, codex or hermes")
-	event := flag.String("event", "", "harness event name, e.g. SessionStart or Stop")
-	autonomy := flag.Int("autonomy", hub.AutonomyNotify, "0 notify, 1 hold, 2 wake")
-	room := flag.String("room", "", "override the room name")
-	flag.Parse()
-
-	os.Exit(run(*harness, *event, *room, *autonomy))
+// Run executes one hook invocation and returns the process exit code.
+//
+// It is called as `agents-room hook <flags>` from a harness configuration.
+func Run(args []string) int {
+	fs := flag.NewFlagSet("hook", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	harness := fs.String("harness", "claude-code", "which harness is calling: claude-code, codex or hermes")
+	event := fs.String("event", "", "harness event name, e.g. SessionStart or Stop")
+	autonomy := fs.Int("autonomy", hub.AutonomyNotify, "0 notify, 1 hold, 2 wake")
+	room := fs.String("room", "", "override the room name")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	return run(*harness, *event, *room, *autonomy)
 }
 
 func run(harness, event, room string, autonomy int) int {

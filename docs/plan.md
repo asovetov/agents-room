@@ -38,8 +38,8 @@ opens it directly:
 
 | Participant | Lifetime | Role |
 |---|---|---|
-| `agents-room-mcp` | one per agent session, stdio | MCP tools, holds the session handle |
-| `agents-room-hook` | short-lived, per harness event | wake signals, join/leave |
+| `agents-room mcp` | one per agent session, stdio | MCP tools, holds the session handle |
+| `agents-room hook` | short-lived, per harness event | wake signals, join/leave |
 | `agents-room` | on demand | CLI: `who`, `send`, `lease`, `watch` |
 
 Why this is better here:
@@ -148,9 +148,7 @@ thin config snippet, not a separate codebase.
 ## Components
 
 ```
-cmd/agents-room          CLI
-cmd/agents-room-mcp      stdio MCP server
-cmd/agents-room-hook     harness hook dispatcher
+cmd/agents-room          the single binary: CLI, `mcp` and `hook` subcommands
 internal/store           SQLite schema, migrations, queries
 internal/room            rooms, sessions, selectors
 internal/lease           claim/release/expiry, append-only events

@@ -5,13 +5,14 @@ are per-harness and optional: without one, the agent pulls with `msg_recv`.
 
 ## Install
 
-Build the three binaries and put them on `PATH`:
+Build the one binary and put it on `PATH`:
 
 ```bash
-go build -o bin/agents-room      ./cmd/agents-room
-go build -o bin/agents-room-mcp  ./cmd/agents-room-mcp
-go build -o bin/agents-room-hook ./cmd/agents-room-hook
+go build -o bin/agents-room ./cmd/agents-room
 ```
+
+The same binary serves MCP (`agents-room mcp`) and runs harness hooks
+(`agents-room hook`), so there is nothing else to install.
 
 Linux, macOS, Windows on amd64 and arm64 build from the same source with no
 cgo and no external runtime.
@@ -26,7 +27,7 @@ Add to `~/.claude.json` or the project `.mcp.json`:
 {
   "mcpServers": {
     "agents-room": {
-      "command": "agents-room-mcp"
+      "command": "agents-room"
     }
   }
 }
@@ -45,22 +46,22 @@ waiting.
   "hooks": {
     "SessionStart": [
       { "hooks": [ { "type": "command",
-        "command": "agents-room-hook --event=SessionStart --autonomy=1",
+        "command": "agents-room hook --event=SessionStart --autonomy=1",
         "timeout": 10 } ] }
     ],
     "SessionEnd": [
       { "hooks": [ { "type": "command",
-        "command": "agents-room-hook --event=SessionEnd",
+        "command": "agents-room hook --event=SessionEnd",
         "timeout": 5 } ] }
     ],
     "Stop": [
       { "hooks": [ { "type": "command",
-        "command": "agents-room-hook --event=Stop",
+        "command": "agents-room hook --event=Stop",
         "timeout": 10 } ] }
     ],
     "PostToolBatch": [
       { "hooks": [ { "type": "command",
-        "command": "agents-room-hook --event=PostToolBatch",
+        "command": "agents-room hook --event=PostToolBatch",
         "timeout": 10 } ] }
     ]
   }
@@ -98,31 +99,31 @@ projects only):
 [[hooks.SessionStart]]
 [[hooks.SessionStart.hooks]]
 type = "command"
-command = "agents-room-hook --harness=codex --event=SessionStart"
+command = "agents-room hook --harness=codex --event=SessionStart"
 timeout = 15
 
 [[hooks.SessionEnd]]
 [[hooks.SessionEnd.hooks]]
 type = "command"
-command = "agents-room-hook --harness=codex --event=SessionEnd"
+command = "agents-room hook --harness=codex --event=SessionEnd"
 timeout = 3
 
 [[hooks.UserPromptSubmit]]
 [[hooks.UserPromptSubmit.hooks]]
 type = "command"
-command = "agents-room-hook --harness=codex --event=UserPromptSubmit"
+command = "agents-room hook --harness=codex --event=UserPromptSubmit"
 timeout = 10
 
 [[hooks.PostToolUse]]
 [[hooks.PostToolUse.hooks]]
 type = "command"
-command = "agents-room-hook --harness=codex --event=PostToolUse"
+command = "agents-room hook --harness=codex --event=PostToolUse"
 timeout = 10
 
 [[hooks.Stop]]
 [[hooks.Stop.hooks]]
 type = "command"
-command = "agents-room-hook --harness=codex --event=Stop"
+command = "agents-room hook --harness=codex --event=Stop"
 timeout = 30
 ```
 
@@ -152,7 +153,7 @@ MCP server registration:
 ```toml
 # ~/.codex/config.toml
 [mcp_servers.agents-room]
-command = "agents-room-mcp"
+command = "agents-room"
 ```
 
 Codex has no cross-session message bus of its own (`codex queue` writes into
@@ -167,16 +168,16 @@ Add to `~/.hermes/config.yaml` (or a profile's `config.yaml`):
 ```yaml
 hooks:
   on_session_start:
-    - command: agents-room-hook --harness=hermes --event=on_session_start
+    - command: agents-room hook --harness=hermes --event=on_session_start
       timeout: 10
   on_session_finalize:
-    - command: agents-room-hook --harness=hermes --event=on_session_finalize
+    - command: agents-room hook --harness=hermes --event=on_session_finalize
       timeout: 10
   pre_llm_call:
-    - command: agents-room-hook --harness=hermes --event=pre_llm_call
+    - command: agents-room hook --harness=hermes --event=pre_llm_call
       timeout: 10
   pre_verify:
-    - command: agents-room-hook --harness=hermes --event=pre_verify
+    - command: agents-room hook --harness=hermes --event=pre_verify
       timeout: 10
 ```
 
@@ -199,7 +200,8 @@ Hermes also accepts the MCP server for the pull path:
 ```yaml
 mcp_servers:
   agents-room:
-    command: agents-room-mcp
+    command: agents-room
+    args: ["mcp"]
     args: []
 ```
 
@@ -212,7 +214,7 @@ in `$(go env GOPATH)/bin`, which is often not on `PATH`; install into a
 directory that is, for example:
 
 ```bash
-GOBIN=~/.local/bin go install github.com/asovetov/agents-room/cmd/...@latest
+GOBIN=~/.local/bin go install github.com/asovetov/agents-room/cmd/agents-room@latest
 ```
 
 Verified against Hermes 0.22.5 through its own shell-hook dispatcher: join,
@@ -221,7 +223,7 @@ level, silence after `msg_recv`, and leave on `on_session_finalize`.
 
 ## Any other MCP client
 
-Register `agents-room-mcp` as a stdio server. The agent calls `room_join`
+Register `agents-room mcp` as a stdio server. The agent calls `room_join`
 once, then `msg_recv` when it wants to check in.
 
 ## Shared rooms by default
