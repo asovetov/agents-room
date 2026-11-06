@@ -224,6 +224,36 @@ level, silence after `msg_recv`, and leave on `on_session_finalize`.
 Register `agents-room-mcp` as a stdio server. The agent calls `room_join`
 once, then `msg_recv` when it wants to check in.
 
+## Shared rooms by default
+
+A shared room is what lets an agent in one repository reach an agent in
+another. Requiring every agent to remember `--also` means, in practice,
+nobody uses it, so the hook discovers the rooms instead.
+
+Two sources, both optional:
+
+```bash
+# once, in your shell profile: applies to every repository on this machine
+export AGENTS_ROOM_SHARED=aerobasis
+```
+
+```text
+# <repository>/.agents-room/shared-rooms: travels with the checkout
+# one room per line, # starts a comment
+aerobasis
+```
+
+The `shared:` prefix is added when missing. Duplicates are removed, and a
+missing file means no shared rooms rather than an error.
+
+`SessionStart` joins the repository room and every discovered shared room.
+Passing `--room` explicitly to the hook turns discovery off for that session,
+which is how to run one agent in isolation.
+
+Discovery covers the hook path. An agent that joins through the CLI or the
+MCP tool passes `--also` or `extra_rooms` itself, because there is no
+environment for it to read.
+
 ## Verifying the setup
 
 ```bash

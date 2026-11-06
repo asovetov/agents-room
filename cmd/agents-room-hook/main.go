@@ -41,6 +41,7 @@ func main() {
 }
 
 func run(harness, event, room string, autonomy int) int {
+	flagRoom := room
 	// Hooks have small time budgets: 30 seconds on UserPromptSubmit, 1.5
 	// seconds shared on SessionEnd. Stay well inside the smallest one.
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
@@ -70,11 +71,21 @@ func run(harness, event, room string, autonomy int) int {
 
 	switch normalizeEvent(harness, event) {
 	case eventJoin:
+		// Shared rooms are discovered, not asked for: a session joins the
+		// repository room and every shared room configured for that
+		// repository or for the machine. Without this every agent would
+		// have to remember --also, and in practice none would.
+		extra := hub.SharedRoomsFrom(in.Cwd)
+		if flagRoom != "" {
+			// An explicit room on the command line replaces discovery, so an
+			// operator can run one session in isolation.
+			extra = nil
+		}
 		// Rejoining is idempotent: SessionStart fires on startup, resume,
 		// clear, compact and fork, and all of them are the same chat.
 		if _, err := h.Join(ctx, hub.JoinOptions{
-			Room: roomName, Harness: harness, HarnessKey: in.SessionID,
-			Cwd: in.Cwd, Autonomy: autonomy,
+			Room: roomName, ExtraRooms: extra, Harness: harness,
+			HarnessKey: in.SessionID, Cwd: in.Cwd, Autonomy: autonomy,
 			Label: shortID(in.SessionID),
 		}); err != nil {
 			return 0

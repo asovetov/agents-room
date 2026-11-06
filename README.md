@@ -102,6 +102,8 @@ Setup per harness is in [`docs/harness-setup.md`](docs/harness-setup.md).
 ```bash
 agents-room join --label "MAVLink dialect" --tag protocol --autonomy 1 --key "$SESSION_ID"
 agents-room join --also shared:aerobasis          # reach agents in sibling repos
+# or set it once for every session the hook starts:
+#   export AGENTS_ROOM_SHARED=aerobasis
 agents-room who
 agents-room cap --set 1
 agents-room lease claim --session <id> --path src/mavlink/wire.go --ttl 600

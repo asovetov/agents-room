@@ -42,6 +42,10 @@ different room updates that session instead of creating a second one.
 The effective autonomy is the strictest cap of every room the session is in,
 so a quiet shared room cannot be bypassed by a loud repository room.
 
+Shared rooms can be discovered rather than named: `AGENTS_ROOM_SHARED` and
+`<repo>/.agents-room/shared-rooms` are read by the hook at `SessionStart`, so
+every agent in a repository joins the same shared rooms without a flag.
+
 A session sends to the union of its rooms. A direct session id must share at
 least one room with the sender; anything else is an error, not a silent
 no-op.
