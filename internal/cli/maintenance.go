@@ -301,9 +301,30 @@ func splitSharedRooms(ctx context.Context, h *hub.Hub) []splitSharedRoom {
 		if err != nil || len(sessions) == 0 {
 			continue
 		}
-		out = append(out, splitSharedRoom{Bare: name, Shared: shared, Stranded: len(sessions)})
+		// Only a session in the bare room and nowhere else is stranded. One
+		// that also joined the shared room is reachable there, and counting
+		// it would send the operator after a session that needs nothing.
+		stranded := 0
+		for _, s := range sessions {
+			if !contains(s.Rooms, shared) {
+				stranded++
+			}
+		}
+		if stranded == 0 {
+			continue
+		}
+		out = append(out, splitSharedRoom{Bare: name, Shared: shared, Stranded: stranded})
 	}
 	return out
+}
+
+func contains(list []string, want string) bool {
+	for _, v := range list {
+		if v == want {
+			return true
+		}
+	}
+	return false
 }
 
 func storeVersion(h *hub.Hub) (int, error) {
