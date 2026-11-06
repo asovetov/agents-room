@@ -126,6 +126,13 @@ Each recipient gets its own row. State only moves forward.
 | `expired` | TTL passed before the body was read |
 | `undeliverable` | this harness has no wake lever; the message waits for a pull |
 
+A wake signal is emitted once per message. `offered` and `accepted` still
+count as unread, because the agent has not fetched the body yet, but they no
+longer trigger another signal: the hook only signals a `stored` row. Signalling
+again at wake level starts a second turn for a message the first turn was
+already about, and a turn whose `Stop` signals again never ends. Once signalled,
+a message waits for `msg_recv`.
+
 A wake signal never carries the body. It carries one line:
 
 ```

@@ -27,16 +27,27 @@ type Result struct {
 	Line   string
 }
 
-// Check looks up a session's unread count and builds the nudge line.
+// Check builds a nudge line for a session, but only while a message is still
+// waiting for its first signal.
+//
+// Unread alone is the wrong trigger: a row that was already offered stays
+// unread until the agent fetches it, so every Stop would signal again. At
+// wake level each signal is a new turn, and a turn whose Stop signals again
+// never ends. The count in the line is the full unread total, because that is
+// what the agent will find when it calls msg_recv.
 func Check(ctx context.Context, h *hub.Hub, sessionID string) (Result, error) {
-	room := h.RoomOf(ctx, sessionID)
+	pending, err := h.Pending(ctx, sessionID)
+	if err != nil {
+		return Result{}, err
+	}
+	if pending == 0 {
+		return Result{}, nil
+	}
 	n, err := h.Unread(ctx, sessionID)
 	if err != nil {
 		return Result{}, err
 	}
-	if n == 0 {
-		return Result{}, nil
-	}
+	room := h.RoomOf(ctx, sessionID)
 	if err := h.Touch(ctx, sessionID); err != nil {
 		return Result{}, err
 	}
