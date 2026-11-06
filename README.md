@@ -122,7 +122,7 @@ agents-room watch
 
 The same operations are MCP tools: `room_join`, `room_leave`, `room_who`,
 `room_leave_room`, `room_set_autonomy_cap`, `msg_send`, `msg_recv`, `msg_ack`,
-`msg_unread`, `lease_claim`, `lease_renew`, `lease_release`, `lease_check`,
+`msg_unread`, `msg_sent`, `lease_claim`, `lease_renew`, `lease_release`, `lease_check`,
 `lease_list`, `note_read`, `drift_check`. The full reference is in
 [`docs/protocol.md`](docs/protocol.md).
 
