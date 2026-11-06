@@ -31,6 +31,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runLeave(ctx, rest, stdout, stderr)
 	case "who":
 		return runWho(ctx, rest, stdout, stderr)
+	case "cap":
+		return runCap(ctx, rest, stdout, stderr)
 	case "send":
 		return runSend(ctx, rest, stdout, stderr)
 	case "recv":
@@ -43,6 +45,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runDrift(ctx, rest, stdout, stderr)
 	case "watch":
 		return runWatch(ctx, rest, stdout, stderr)
+	case "prune":
+		return runPrune(ctx, rest, stdout, stderr)
 	case "path":
 		return runPath(stdout, stderr)
 	case "version":
@@ -65,15 +69,17 @@ func usage(w io.Writer) {
 	fmt.Fprint(w, `agents-room coordinates AI coding agents working in the same codebase.
 
 Usage:
-  agents-room join   [--room NAME] [--label TEXT] [--tag T]... [--autonomy 0|1|2]
+  agents-room join   [--room NAME] [--label TEXT] [--tag T]... [--autonomy 0|1|2] [--key K]
   agents-room leave  --session ID
   agents-room who    [--room NAME] [--json]
+  agents-room cap    [--room NAME] [--set 0|1|2]
   agents-room send   --session ID --to SELECTOR [--subject TEXT] [--body TEXT] [--ttl SECONDS]
   agents-room recv   --session ID [--limit N] [--json]
   agents-room ack    --session ID --message ID
-  agents-room lease  claim|release|check|list --session ID [--path PATH] [--ttl SECONDS] [--mode exclusive|shared]
+  agents-room lease  claim|renew|release|check|list --session ID [--path PATH] [--ttl SECONDS] [--mode exclusive|shared]
   agents-room drift  note|check --session ID --path PATH
   agents-room watch  [--room NAME] [--interval SECONDS]
+  agents-room prune  [--room NAME] [--older-than HOURS]
   agents-room path
 
 Selectors for --to: * | <session-id> | file:<glob> | tag:<tag>
@@ -101,6 +107,8 @@ func runJoin(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	room := fs.String("room", "", "room name (default: repo:<directory>)")
 	label := fs.String("label", "", "human label for this session")
 	autonomy := fs.Int("autonomy", hub.AutonomyNotify, "0 notify, 1 hold, 2 wake")
+	key := fs.String("key", "", "stable harness session key; a repeat join updates the same session")
+	harness := fs.String("harness", "", "harness name (default: detect from the environment)")
 	var tags stringList
 	fs.Var(&tags, "tag", "tag for addressing (repeatable)")
 	if err := fs.Parse(args); err != nil {
@@ -115,6 +123,7 @@ func runJoin(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 
 	s, err := h.Join(ctx, hub.JoinOptions{
 		Room: *room, Label: *label, Tags: tags, Autonomy: *autonomy,
+		HarnessKey: *key, Harness: *harness,
 	})
 	if err != nil {
 		return fail(stderr, err)
@@ -186,6 +195,50 @@ func runWho(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	if err := tw.Flush(); err != nil {
 		return fail(stderr, err)
 	}
+	return 0
+}
+
+func runCap(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("cap", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	room := fs.String("room", "", "room name (default: repo:<directory>)")
+	set := fs.Int("set", -1, "new cap: 0 notify, 1 hold, 2 wake; omit to read")
+	asJSON := fs.Bool("json", false, "print JSON")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+
+	name := *room
+	if name == "" {
+		name = hub.RepoRoom("")
+	}
+
+	h, code := open(stderr)
+	if code != 0 {
+		return code
+	}
+	defer h.Close()
+
+	if *set >= 0 {
+		cap, err := h.SetRoomAutonomyCap(ctx, name, *set)
+		if err != nil {
+			return fail(stderr, err)
+		}
+		if *asJSON {
+			return writeJSON(stdout, stderr, map[string]any{"room": name, "autonomy": cap})
+		}
+		fmt.Fprintf(stdout, "%s autonomy cap: %d\n", name, cap)
+		return 0
+	}
+
+	cap, err := h.RoomAutonomyCap(ctx, name)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	if *asJSON {
+		return writeJSON(stdout, stderr, map[string]any{"room": name, "autonomy": cap})
+	}
+	fmt.Fprintf(stdout, "%s autonomy cap: %d\n", name, cap)
 	return 0
 }
 
@@ -299,7 +352,7 @@ func runLease(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	if *session == "" {
 		return fail(stderr, fmt.Errorf("--session is required"))
 	}
-	if (sub == "claim" || sub == "release" || sub == "check") && *path == "" {
+	if (sub == "claim" || sub == "release" || sub == "check" || sub == "renew") && *path == "" {
 		return fail(stderr, fmt.Errorf("--path is required"))
 	}
 
@@ -324,6 +377,18 @@ func runLease(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		}
 		fmt.Fprintf(stdout, "granted: %s until %s\n", res.Holder.Path,
 			time.Unix(res.Holder.ExpiresAt, 0).Format(time.RFC3339))
+		return 0
+
+	case "renew":
+		lease, err := h.Renew(ctx, *session, *path, *ttl)
+		if err != nil {
+			return fail(stderr, err)
+		}
+		if *asJSON {
+			return writeJSON(stdout, stderr, lease)
+		}
+		fmt.Fprintf(stdout, "renewed: %s until %s\n", lease.Path,
+			time.Unix(lease.ExpiresAt, 0).Format(time.RFC3339))
 		return 0
 
 	case "release":
@@ -424,6 +489,33 @@ func runDrift(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 	default:
 		return fail(stderr, fmt.Errorf("unknown drift subcommand %q", sub))
 	}
+}
+
+func runPrune(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("prune", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	room := fs.String("room", "", "room name (default: repo:<directory>)")
+	hours := fs.Int("older-than", 24, "remove sessions not seen for this many hours")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	name := *room
+	if name == "" {
+		name = hub.RepoRoom("")
+	}
+
+	h, code := open(stderr)
+	if code != 0 {
+		return code
+	}
+	defer h.Close()
+
+	n, err := h.PruneStale(ctx, name, time.Duration(*hours)*time.Hour)
+	if err != nil {
+		return fail(stderr, err)
+	}
+	fmt.Fprintf(stdout, "removed %d stale session(s) from %s\n", n, name)
+	return 0
 }
 
 func runPath(stdout, stderr io.Writer) int {

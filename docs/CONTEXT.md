@@ -36,11 +36,13 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
 
 ## Open
 
-1. A room-level autonomy cap that an operator can lower. Today the cap is
-   the maximum level; the schema already carries a per-session level.
-2. A Codex and a Hermes wake adapter beyond the generic hook output.
-3. Whether `hold` should have a per-turn cap lower than the harness default.
-4. Release packaging: signed checksums and a `go install` path.
+1. A dedicated Codex wake adapter. Codex uses the generic hook output today;
+   its own hook contract has not been verified against a live install.
+2. Whether `hold` should have a per-turn cap lower than the harness default.
+3. Release packaging: signed checksums and a `go install` path.
+4. Automatic lease renewal. `lease_renew` exists, but nothing calls it on a
+   schedule yet; a long edit can still outlive its TTL.
+5. Automatic pruning. `agents-room prune` exists, but no timer runs it.
 
 ## Ground rules for changes
 

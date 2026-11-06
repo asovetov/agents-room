@@ -20,7 +20,12 @@ Override with `AGENTS_ROOM_DB`. There is no daemon.
 ## Sessions
 
 `room_join` returns a session id. Every other tool takes it back as an
-explicit handle. The MCP 2026-07-28 revision removed protocol sessions and
+explicit handle.
+
+Passing `harness_key` makes a join idempotent. Claude Code fires
+`SessionStart` on startup, resume, clear, compact and fork, and Hermes fires
+`on_session_start` on each new chat; without the key, one chat would appear
+as five sessions. The key is the harness's own session id. The MCP 2026-07-28 revision removed protocol sessions and
 server-initiated requests, and asks servers to mint a handle the model passes
 back; this follows that shape.
 
@@ -36,8 +41,16 @@ who is alive.
 | `file:<glob>` | sessions holding a live lease matching the glob |
 | `tag:<tag>` | sessions that joined with that tag |
 
-A glob matches the way `filepath.Match` does. A trailing `/**` also matches
-everything below the prefix, so `file:src/api/**` covers the whole tree.
+Paths are normalised to absolute form before they are stored, so
+`src/wire.go` and `/abs/src/wire.go` from the same directory contend for one
+lease. A file selector is matched against the leased path in three forms:
+the full path, the path relative to the room's working directory, and the
+bare base name. A trailing `/**` also matches everything below the prefix,
+so `file:src/api/**` covers the whole tree.
+
+Matching uses `path.Match`, not `filepath.Match`: on Windows the latter
+treats the backslash as the separator, so `src/*.go` would match
+`src/sub/wire.go` there.
 
 `file:` and `tag:` exist because the useful question is rarely "what is this
 session called". It is "who is touching this file" and "who is working on the
@@ -77,7 +90,9 @@ and inserts. Two processes claiming the same path cannot both succeed.
 | `exclusive` | one holder; blocks every other claim |
 | `shared` | several holders; blocks exclusive claims, allows other shared ones |
 
-Every lease has a TTL. Default is 1800 seconds. An expired lease is ignored
+Every lease has a TTL. Default is 1800 seconds. `lease_renew` extends one a
+session already holds and never takes a path it does not hold, so a stale
+agent cannot re-acquire a file someone else has since claimed. An expired lease is ignored
 by every read and removed by the next claim, so a crashed session cannot hold
 a file forever. `room_leave` releases everything the session held.
 
@@ -99,14 +114,16 @@ for it. Re-read before editing.
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `room_join` | `room?`, `label?`, `tags?`, `autonomy?` | `session_id`, `room`, `autonomy` |
+| `room_join` | `room?`, `label?`, `tags?`, `autonomy?`, `harness?`, `harness_key?` | `session_id`, `room`, `autonomy` |
 | `room_leave` | `session_id` | nothing |
 | `room_who` | `session_id?`, `room?` | sessions |
+| `room_set_autonomy_cap` | `session_id?`, `room?`, `autonomy` | `room`, `autonomy` |
 | `msg_send` | `session_id`, `to`, `subject?`, `body?`, `reply_to?`, `ttl_s?` | `message_id` |
 | `msg_recv` | `session_id`, `limit?` | messages, marked read |
 | `msg_ack` | `session_id`, `message_id` | nothing |
 | `msg_unread` | `session_id` | `count` |
 | `lease_claim` | `session_id`, `path`, `ttl_s?`, `mode?` | `ok`, `holder`, `reason` |
+| `lease_renew` | `session_id`, `path`, `ttl_s?` | the renewed lease |
 | `lease_release` | `session_id`, `path` | nothing |
 | `lease_check` | `session_id`, `path` | `free`, `lease` |
 | `lease_list` | `session_id` | leases |
@@ -124,7 +141,10 @@ Autonomy decides whether a wake signal may interrupt the agent.
 | 2 | `wake` | may also start a turn in an idle session |
 
 The effective level is the minimum of what the agent asks for and the room
-cap. `room_who` shows every session's effective level, so the operator always
+cap. The cap is per room and defaults to `wake`; an operator lowers it with
+`room_set_autonomy_cap` or `agents-room cap --set N`. Sessions already
+running keep their level until they rejoin, so raising a cap never silently
+grants interrupt rights to a session that did not ask for them. `room_who` shows every session's effective level, so the operator always
 knows who is allowed to interrupt whom.
 
 A harness without a wake lever cannot act on level 1 or 2. Its messages stay

@@ -76,6 +76,10 @@ stdout on success, so no duplicate context is injected.
 `SessionStart` output goes straight into the model context, so the hook stays
 silent there by design.
 
+A join is keyed on the harness session id, so the five `SessionStart`
+matchers (startup, resume, clear, compact, fork) all update one room
+session instead of creating five.
+
 ### Autonomy in practice
 
 - `--autonomy=0`: nudge only. The agent sees the line when it next runs a tool.
@@ -98,8 +102,51 @@ command = "agents-room-mcp"
 
 ## Hermes
 
-Hermes is pull-only until an adapter exists. Register the MCP server and let
-the agent call `msg_recv` at the start of a task.
+Hermes has shell hooks that can inject context and hold the end of a turn.
+Add to `~/.hermes/config.yaml` (or a profile's `config.yaml`):
+
+```yaml
+hooks:
+  on_session_start:
+    - command: agents-room-hook --harness=hermes --event=on_session_start
+      timeout: 10
+  on_session_finalize:
+    - command: agents-room-hook --harness=hermes --event=on_session_finalize
+      timeout: 10
+  pre_llm_call:
+    - command: agents-room-hook --harness=hermes --event=pre_llm_call
+      timeout: 10
+  pre_verify:
+    - command: agents-room-hook --harness=hermes --event=pre_verify
+      timeout: 10
+```
+
+The hook speaks Hermes's JSON wire protocol: a payload on stdin, a JSON
+object on stdout.
+
+| Event | Output | Effect |
+|---|---|---|
+| `on_session_start` | none | joins the room |
+| `on_session_finalize` | none | leaves the room and releases leases |
+| `pre_llm_call` | `{"context": "..."}` | appends the nudge to the user message |
+| `pre_verify` | `{"action": "continue", "message": "..."}` | holds the end of a turn, only at `hold` or above |
+
+`pre_llm_call` fires once per turn, so the nudge arrives with the next
+message. `pre_verify` only fires when the agent edited code, which is
+exactly the moment a lease or a message is most likely to matter.
+
+Hermes also accepts the MCP server for the pull path:
+
+```yaml
+mcp_servers:
+  agents-room:
+    command: agents-room-mcp
+    args: []
+```
+
+Hermes asks for consent the first time it sees a `(event, command)` pair.
+Set `hooks_auto_accept: true` in the same config only if you accept every
+hook in it.
 
 ## Any other MCP client
 

@@ -4,7 +4,7 @@ LDFLAGS := -s -w -X github.com/asovetov/agents-room/internal/cli.Version=$(VERSI
 
 BINARIES := agents-room agents-room-mcp agents-room-hook
 
-.PHONY: all build test race vet fmt cross clean
+.PHONY: all build install test race vet fmt cross clean
 
 all: build
 
@@ -12,6 +12,10 @@ build:
 	go build -trimpath -ldflags '$(LDFLAGS)' -o bin/agents-room ./cmd/agents-room
 	go build -trimpath -ldflags '$(LDFLAGS)' -o bin/agents-room-mcp ./cmd/agents-room-mcp
 	go build -trimpath -ldflags '$(LDFLAGS)' -o bin/agents-room-hook ./cmd/agents-room-hook
+
+# install puts the three binaries in GOBIN (or GOPATH/bin).
+install:
+	go install -trimpath -ldflags '$(LDFLAGS)' ./cmd/...
 
 test:
 	go test ./...

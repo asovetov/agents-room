@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	pathpkg "path"
+	"path/filepath"
 	"strings"
 )
 
@@ -150,7 +151,7 @@ func (h *Hub) resolve(ctx context.Context, roomID, sender, selector string) ([]s
 		defer rows.Close()
 
 		seen := map[string]bool{}
-		var out []string
+		out := []string{}
 		for rows.Next() {
 			var path, owner string
 			if err := rows.Scan(&path, &owner); err != nil {
@@ -159,7 +160,7 @@ func (h *Hub) resolve(ctx context.Context, roomID, sender, selector string) ([]s
 			if owner == sender || seen[owner] {
 				continue
 			}
-			if globMatch(pattern, path) {
+			if h.matchLeasedPath(ctx, roomID, pattern, path) {
 				seen[owner] = true
 				out = append(out, owner)
 			}
@@ -175,7 +176,7 @@ func (h *Hub) resolve(ctx context.Context, roomID, sender, selector string) ([]s
 		if err != nil {
 			return nil, err
 		}
-		var out []string
+		out := []string{}
 		for _, s := range sessions {
 			if s.ID == sender {
 				continue
@@ -227,6 +228,39 @@ func (h *Hub) querySessions(ctx context.Context, query string, args ...any) ([]s
 	return out, rows.Err()
 }
 
+// matchLeasedPath matches a file selector against a leased path.
+//
+// Leases store absolute paths so two sessions cannot hold one file under
+// different names. A selector is usually written relative to the project, so
+// the pattern is tried against the full path, the path relative to the room's
+// working directory, and the bare base name.
+func (h *Hub) matchLeasedPath(ctx context.Context, roomID, pattern, leased string) bool {
+	if globMatch(pattern, leased) {
+		return true
+	}
+	if cwd := h.roomCwd(ctx, roomID); cwd != "" {
+		if rel, err := filepath.Rel(cwd, leased); err == nil {
+			if globMatch(pattern, rel) {
+				return true
+			}
+		}
+	}
+	return globMatch(pattern, filepath.Base(leased))
+}
+
+// roomCwd returns the working directory most sessions in the room share, or
+// an empty string when there is no session.
+func (h *Hub) roomCwd(ctx context.Context, roomID string) string {
+	var cwd string
+	err := h.db.SQL().QueryRowContext(ctx, `
+		SELECT cwd FROM sessions WHERE room_id = ? ORDER BY joined_at ASC LIMIT 1`,
+		roomID).Scan(&cwd)
+	if err != nil {
+		return ""
+	}
+	return cwd
+}
+
 func (h *Hub) roomName(ctx context.Context, roomID string) string {
 	var name string
 	if err := h.db.SQL().QueryRowContext(ctx,
@@ -273,7 +307,7 @@ func (h *Hub) Recv(ctx context.Context, sessionID string, limit int) ([]Message,
 		return nil, fmt.Errorf("recv: query: %w", err)
 	}
 
-	var out []Message
+	out := []Message{}
 	var ids []string
 	for rows.Next() {
 		var m Message

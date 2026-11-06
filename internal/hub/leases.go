@@ -5,9 +5,21 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"path/filepath"
 
 	"github.com/asovetov/agents-room/internal/store"
 )
+
+// normalizePath makes a path absolute and clean so that two sessions naming
+// the same file differently still contend for one lease. "src/wire.go" and
+// "/abs/src/wire.go" from the same directory must not become two leases.
+func normalizePath(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	return abs, nil
+}
 
 // Lease modes. A shared lease allows several holders; an exclusive lease
 // allows exactly one.
@@ -42,6 +54,10 @@ type LeaseResult struct {
 func (h *Hub) Claim(ctx context.Context, sessionID, path string, ttlSeconds int64, mode string) (*LeaseResult, error) {
 	if path == "" {
 		return nil, errors.New("claim: path is required")
+	}
+	path, err := normalizePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("claim: %w", err)
 	}
 	if ttlSeconds <= 0 {
 		ttlSeconds = 1800
@@ -138,8 +154,47 @@ func (h *Hub) Claim(ctx context.Context, sessionID, path string, ttlSeconds int6
 	return &LeaseResult{OK: true, Holder: lease}, nil
 }
 
+// Renew extends a lease the session already holds.
+//
+// A long edit can outlive the TTL. Renewing is not the same as claiming: it
+// never takes a path the session does not hold, so a stale agent cannot
+// re-acquire a file someone else has since taken.
+func (h *Hub) Renew(ctx context.Context, sessionID, path string, ttlSeconds int64) (*Lease, error) {
+	path, err := normalizePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("renew: %w", err)
+	}
+	if ttlSeconds <= 0 {
+		ttlSeconds = 1800
+	}
+	roomID, err := h.sessionRoom(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("renew: %w", err)
+	}
+	now := h.now()
+	res, err := h.db.SQL().ExecContext(ctx, `
+		UPDATE leases SET expires_at = ?
+		WHERE room_id = ? AND path = ? AND owner = ? AND expires_at > ?`,
+		now+ttlSeconds, roomID, path, sessionID, now)
+	if err != nil {
+		return nil, fmt.Errorf("renew: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return nil, fmt.Errorf("renew: %w", err)
+	}
+	if n == 0 {
+		return nil, fmt.Errorf("renew: no live lease on %q held by this session", path)
+	}
+	return h.leaseFor(ctx, roomID, path, sessionID)
+}
+
 // Release drops every lease a session holds on path.
 func (h *Hub) Release(ctx context.Context, sessionID, path string) error {
+	path, err := normalizePath(path)
+	if err != nil {
+		return fmt.Errorf("release: %w", err)
+	}
 	roomID, err := h.sessionRoom(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("release: %w", err)
@@ -164,6 +219,10 @@ func (h *Hub) Release(ctx context.Context, sessionID, path string) error {
 
 // Check reports the live holder of an exact path, if any.
 func (h *Hub) Check(ctx context.Context, sessionID, path string) (*Lease, error) {
+	path, err := normalizePath(path)
+	if err != nil {
+		return nil, fmt.Errorf("check: %w", err)
+	}
 	roomID, err := h.sessionRoom(ctx, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("check: %w", err)
@@ -201,7 +260,7 @@ func (h *Hub) List(ctx context.Context, sessionID string) ([]Lease, error) {
 	}
 	defer rows.Close()
 
-	var out []Lease
+	out := []Lease{}
 	for rows.Next() {
 		var l Lease
 		if err := rows.Scan(&l.Path, &l.Owner, &l.Mode, &l.AcquiredAt,
