@@ -206,25 +206,32 @@ func TestDoctorReportsSplitSharedRoom(t *testing.T) {
 	run("join", "--room", "repo:x", "--also", "shared:aerobasis", "--key", "a")
 
 	// Join normalises the prefix, so the split can only be built by hand the
-	// way the old binary left it behind: a bare room beside the shared one.
+	// way the old binary left it behind: a bare room beside the shared one,
+	// holding a session that never reached the shared room.
 	db, err := store.Open(os.Getenv("AGENTS_ROOM_DB"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
 	}
 	defer db.Close()
-	if _, err := db.SQL().ExecContext(context.Background(),
-		`INSERT INTO rooms (id, name, created_at) VALUES ('bare1', 'aerobasis', 1)`); err != nil {
-		t.Fatalf("insert bare room: %v", err)
+	exec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := db.SQL().ExecContext(context.Background(), q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
 	}
-	if _, err := db.SQL().ExecContext(context.Background(),
-		`INSERT INTO session_rooms (session_id, room_id, joined_at)
-		 SELECT id, 'bare1', 1 FROM sessions LIMIT 1`); err != nil {
-		t.Fatalf("attach session to bare room: %v", err)
-	}
+	exec(`INSERT INTO rooms (id, name, created_at) VALUES ('bare1', 'aerobasis', 1)`)
+	exec(`INSERT INTO sessions (id, room_id, harness, cwd, pid, label, tags, autonomy,
+	                            joined_at, last_seen, harness_key)
+	      VALUES ('stranded', 'bare1', 'test', '/tmp', 1, 'stranded', '[]', 1, 1, 1, '')`)
+	exec(`INSERT INTO session_rooms (session_id, room_id, joined_at)
+	      VALUES ('stranded', 'bare1', 1)`)
 
 	_, out, _ := run("doctor")
 	if !strings.Contains(out, "aerobasis and shared:aerobasis are two rooms") {
 		t.Fatalf("doctor did not report the split room; output:\n%s", out)
+	}
+	if !strings.Contains(out, "1 session(s)") {
+		t.Fatalf("doctor counted the reachable session as stranded; output:\n%s", out)
 	}
 }
 
