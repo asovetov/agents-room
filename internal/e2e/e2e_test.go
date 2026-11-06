@@ -7,6 +7,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -16,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
 var binDir string
@@ -261,5 +264,49 @@ func TestHookSessionEndRemovesTheSession(t *testing.T) {
 	}
 	if len(sessions) != 0 {
 		t.Fatalf("%d sessions remain after SessionEnd, want 0", len(sessions))
+	}
+}
+
+// TestMCPOverStdio drives the MCP server the way a harness does: a real
+// child process over stdin and stdout.
+func TestMCPOverStdio(t *testing.T) {
+	e := newEnv(t)
+	exe := filepath.Join(binDir, "agents-room-mcp")
+	if runtime.GOOS == "windows" {
+		exe += ".exe"
+	}
+
+	cmd := exec.Command(exe)
+	cmd.Env = append(scrubEnv(os.Environ()), "AGENTS_ROOM_DB="+e.db)
+	cmd.Dir = e.cwd
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "e2e", Version: "1"}, nil)
+	ctx := context.Background()
+	cs, err := client.Connect(ctx, &mcp.CommandTransport{Command: cmd}, nil)
+	if err != nil {
+		t.Fatalf("connect over stdio: %v", err)
+	}
+	defer cs.Close()
+
+	tools, err := cs.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatalf("list tools: %v", err)
+	}
+	if len(tools.Tools) < 14 {
+		t.Fatalf("server exposed %d tools over stdio, want at least 14", len(tools.Tools))
+	}
+
+	// A full round trip through the real transport.
+	joinRes, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "room_join",
+		Arguments: map[string]any{"room": "repo:stdio", "harness": "test", "harness_key": "a"},
+	})
+	if err != nil || joinRes.IsError {
+		t.Fatalf("room_join over stdio: %v %v", err, joinRes)
+	}
+	structured, _ := joinRes.StructuredContent.(map[string]any)
+	id, _ := structured["session_id"].(string)
+	if id == "" {
+		t.Fatalf("room_join returned no session id: %v", structured)
 	}
 }
