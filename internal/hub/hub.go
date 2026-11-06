@@ -833,9 +833,9 @@ func (h *Hub) PlanDuplicateFix(ctx context.Context) ([]DuplicateFix, error) {
 	out := make([]DuplicateFix, 0, len(dups))
 	for _, d := range dups {
 		type candidate struct {
-			id          string
-			harnessKey  string
-			joinedAt    int64
+			id         string
+			harnessKey string
+			joinedAt   int64
 		}
 		var cands []candidate
 		for _, id := range d.IDs {
