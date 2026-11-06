@@ -207,6 +207,18 @@ Hermes asks for consent the first time it sees a `(event, command)` pair.
 Set `hooks_auto_accept: true` in the same config only if you accept every
 hook in it.
 
+The hook binary must be on the `PATH` Hermes inherits. `go install` puts it
+in `$(go env GOPATH)/bin`, which is often not on `PATH`; install into a
+directory that is, for example:
+
+```bash
+GOBIN=~/.local/bin go install github.com/asovetov/agents-room/cmd/...@latest
+```
+
+Verified against Hermes 0.22.5 through its own shell-hook dispatcher: join,
+`pre_llm_call` context injection, `pre_verify` holding the turn at `hold`
+level, silence after `msg_recv`, and leave on `on_session_finalize`.
+
 ## Any other MCP client
 
 Register `agents-room-mcp` as a stdio server. The agent calls `room_join`
