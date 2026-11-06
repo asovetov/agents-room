@@ -158,6 +158,12 @@ are tested, including an end-to-end suite that runs the real binaries as
 separate processes. See
 [`docs/plan.md`](docs/plan.md) for milestones and what is still open.
 
+`make crosscheck` compiles every package and test binary for macOS and
+Windows. It cannot run them, but it catches what Linux hides: a file missing
+its build tag, a test calling something that exists on one platform only.
+Two bugs in 0.5.x failed only on the Windows runner and would have shown up
+here in seconds.
+
 ## License
 
 GPLv3. Free to use, modify and redistribute under the same terms. This
