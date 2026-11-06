@@ -51,10 +51,24 @@ jobs:
             --local-user 9E7AB401595DFD94C63BFB1FEF3CC6A257F1562B \
             --armor --detach-sign SHA256SUMS
 
+      # The notes are the tag message, so every release says what changed in
+      # that version. A generic footer with install and verification steps is
+      # appended, because those do not change between releases.
+      - name: Build release notes
+        run: |
+          git tag -l --format='%(contents)' "${GITHUB_REF_NAME}" > notes.md
+          # Drop the signature block a signed tag carries.
+          sed -i '/^-----BEGIN PGP SIGNATURE-----$/,$d' notes.md
+          # The first line is the tag name itself; the title already says it.
+          sed -i '1{/^'"${GITHUB_REF_NAME}"'$/d}' notes.md
+          cat docs/release-footer.md >> notes.md
+          echo "--- notes ---"
+          cat notes.md
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --title "${GITHUB_REF_NAME}" \
-            --notes-file docs/release-notes.md
+            --notes-file notes.md
