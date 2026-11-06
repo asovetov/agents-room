@@ -68,7 +68,7 @@ func TestToolsAreListed(t *testing.T) {
 		"room_join": false, "room_leave": false, "room_leave_room": false, "room_who": false,
 		"room_set_autonomy_cap": false,
 		"msg_send":              false, "msg_recv": false, "msg_ack": false, "msg_unread": false,
-		"msg_sent": false,
+		"msg_sent":    false,
 		"lease_claim": false, "lease_renew": false, "lease_release": false,
 		"lease_check": false, "lease_list": false,
 		"note_read": false, "drift_check": false,
