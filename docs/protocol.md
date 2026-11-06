@@ -116,6 +116,11 @@ reports the same count for the message it just delivered.
 
 Each recipient gets its own row. State only moves forward.
 
+A delivery belongs to a session, so it goes when the session goes: `leave`
+and `prune` delete the session's rows, and schema version 4 dropped the ones
+left behind by earlier versions. A row whose session is gone can never be
+read and would still be counted as unread.
+
 | State | Meaning |
 |---|---|
 | `stored` | written, no wake signal attempted |

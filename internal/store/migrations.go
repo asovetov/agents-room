@@ -89,6 +89,30 @@ var migrations = []migration{
 			return nil
 		},
 	},
+	{
+		version: 4,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			// deliveries.session_id was the one column with no REFERENCES
+			// clause, so deleting a session left its deliveries behind. They
+			// are invisible in room_who and never read, but Unread and Pending
+			// count them, so every hook event paid for rows that belonged to
+			// sessions that no longer exist. A store that ran for a day had
+			// more of them than live ones.
+			//
+			// Deleting the orphans is safe: a delivery is only meaningful for
+			// a session that can still fetch it.
+			stmts := []string{
+				`DELETE FROM deliveries
+				   WHERE session_id NOT IN (SELECT id FROM sessions)`,
+			}
+			for _, s := range stmts {
+				if _, err := conn.ExecContext(ctx, s); err != nil {
+					return fmt.Errorf("migration 4: %w", err)
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // migrate applies every step the database has not seen yet.
