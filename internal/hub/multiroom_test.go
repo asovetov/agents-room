@@ -2,6 +2,8 @@ package hub
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -258,5 +260,59 @@ func TestFileSelectorUsesHolderDirectory(t *testing.T) {
 	}
 	if n, _ := h.Unread(ctx, gcs.ID); n != 0 {
 		t.Fatalf("gcs received %d messages for a file it does not hold", n)
+	}
+}
+
+func TestSharedRoomsFromFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".agents-room"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := "# rooms for this repository\nstorefront\nshared:protocol  # already prefixed\n\n"
+	if err := os.WriteFile(filepath.Join(dir, ".agents-room", "shared-rooms"), []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	got := SharedRoomsFrom(dir)
+	want := []string{"shared:storefront", "shared:protocol"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
+func TestSharedRoomsFromEnv(t *testing.T) {
+	t.Setenv("AGENTS_ROOM_SHARED", "storefront, shared:protocol")
+	got := SharedRoomsFrom(t.TempDir())
+	if len(got) != 2 || got[0] != "shared:storefront" || got[1] != "shared:protocol" {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestSharedRoomsDeduplicate(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".agents-room"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".agents-room", "shared-rooms"),
+		[]byte("storefront\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("AGENTS_ROOM_SHARED", "shared:storefront")
+
+	got := SharedRoomsFrom(dir)
+	if len(got) != 1 {
+		t.Fatalf("got %v, want one room after de-duplication", got)
+	}
+}
+
+func TestSharedRoomsMissingConfigIsEmpty(t *testing.T) {
+	t.Setenv("AGENTS_ROOM_SHARED", "")
+	if got := SharedRoomsFrom(t.TempDir()); len(got) != 0 {
+		t.Fatalf("got %v, want none", got)
 	}
 }

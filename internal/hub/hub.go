@@ -643,6 +643,70 @@ func mustRoomIDs(ctx context.Context, h *Hub, sessionID string) []string {
 	return out
 }
 
+// SharedRoomsFrom discovers shared rooms a session should join without being
+// told, so that a "shared by default" setup needs no per-agent flag.
+//
+// Two sources, in order:
+//
+//  1. AGENTS_ROOM_SHARED: comma-separated room names, from the environment
+//     the harness passes to its hooks. Set it once in your shell profile.
+//  2. .agents-room/shared-rooms in the repository root: one room name per
+//     line, "#" starts a comment. This is per-repository and travels with
+//     the checkout, so a team gets the same rooms without extra setup.
+//
+// Names without a "shared:" prefix get one. Duplicates are removed. An
+// unreadable file is not an error: a missing config means no shared rooms.
+func SharedRoomsFrom(dir string) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || strings.HasPrefix(name, "#") {
+			return
+		}
+		if !strings.Contains(name, ":") {
+			name = "shared:" + name
+		}
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+
+	for _, name := range strings.Split(os.Getenv("AGENTS_ROOM_SHARED"), ",") {
+		add(name)
+	}
+
+	root := repoRoot(dir)
+	data, err := os.ReadFile(filepath.Join(root, ".agents-room", "shared-rooms"))
+	if err == nil {
+		for _, line := range strings.Split(string(data), "\n") {
+			if i := strings.Index(line, "#"); i >= 0 {
+				line = line[:i]
+			}
+			add(line)
+		}
+	}
+	return out
+}
+
+// repoRoot returns the git top level of dir, or dir itself.
+func repoRoot(dir string) string {
+	if dir == "" {
+		var err error
+		dir, err = os.Getwd()
+		if err != nil {
+			return ""
+		}
+	}
+	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
+		if s := strings.TrimSpace(string(out)); s != "" {
+			return s
+		}
+	}
+	return dir
+}
+
 // RepoRoom derives the default room name from a directory: the git top level
 // when there is one, otherwise the directory itself.
 func RepoRoom(dir string) string {
@@ -653,13 +717,7 @@ func RepoRoom(dir string) string {
 			return "repo:default"
 		}
 	}
-	root := dir
-	if out, err := exec.Command("git", "-C", dir, "rev-parse", "--show-toplevel").Output(); err == nil {
-		if s := strings.TrimSpace(string(out)); s != "" {
-			root = s
-		}
-	}
-	return "repo:" + filepath.Base(root)
+	return "repo:" + filepath.Base(repoRoot(dir))
 }
 
 // HarnessName is a best-effort label for the current harness. It is never

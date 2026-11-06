@@ -102,6 +102,8 @@ Setup per harness is in [`docs/harness-setup.md`](docs/harness-setup.md).
 ```bash
 agents-room join --label "users API" --tag protocol --autonomy 1 --key "$SESSION_ID"
 agents-room join --also shared:storefront          # reach agents in sibling repos
+# or set it once for every session the hook starts:
+#   export AGENTS_ROOM_SHARED=storefront
 agents-room who
 agents-room cap --set 1
 agents-room lease claim --session <id> --path src/api/users.go --ttl 600
