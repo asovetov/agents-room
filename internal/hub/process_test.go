@@ -58,6 +58,20 @@ func TestJoinRecordsHarnessPIDNotTheJoiningProcess(t *testing.T) {
 	}
 }
 
+// The recorded pid must be a process that outlives the command. Walking to
+// the nearest parent is not enough: a hook runs under a shell that exits
+// immediately, so the chain is followed until a known harness appears.
+func TestHarnessPIDIsNotTheImmediateParent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process names are read from /proc on this path")
+	}
+	pid := HarnessPIDFromEnv()
+	if pid == os.Getppid() && !harnessProcessNames[processName(pid)] {
+		t.Fatalf("recorded the immediate parent %d (%q), which is not a harness",
+			pid, processName(pid))
+	}
+}
+
 // An explicit pid still wins: a harness that knows better must be able to
 // say which process owns the chat.
 func TestJoinKeepsExplicitPID(t *testing.T) {

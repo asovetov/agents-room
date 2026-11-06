@@ -4,6 +4,15 @@ package hub
 
 import "syscall"
 
+// processName is unavailable on Windows: there is no /proc, and the toolhelp
+// API would be the only way to read a process name. An empty result means
+// the harness is never recognised, so the session records no pid and prune
+// keeps it, which is the safe direction.
+func processName(int) string { return "" }
+
+// parentPID is unavailable on Windows for the same reason.
+func parentPID(int) (int, error) { return 0, syscall.ENOSYS }
+
 // processAlive reports whether a pid still exists on Windows.
 //
 // os.FindProcess always succeeds there and Signal(0) is not supported, so the
