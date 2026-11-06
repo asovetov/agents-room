@@ -318,7 +318,9 @@ func TestDoctorReportsExpiringLease(t *testing.T) {
 	if !strings.Contains(aged, "lease ends in") {
 		t.Fatalf("doctor did not report a lease about to lapse:\n%s", aged)
 	}
-	if !strings.Contains(aged, "src/x.go") {
+	// The stored path is absolute, so the separator differs by platform and
+	// matching the literal "src/x.go" passes on Linux by luck only.
+	if !strings.Contains(aged, filepath.Join("src", "x.go")) {
 		t.Fatalf("doctor named the warning but not the path:\n%s", aged)
 	}
 }
