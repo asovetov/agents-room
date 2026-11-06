@@ -44,6 +44,11 @@ be very much alive. `prune` therefore removes a session only when it has also
 been quiet longer than the threshold **and** its pid is gone; it releases no
 leases for a process that still exists.
 
+The pid has to be the harness process, not the process that joined: `join`
+and `mcp` are short-lived children of the chat, so their own pid is dead
+before anyone looks. A session records `AGENTS_ROOM_PID` when it is set and
+its parent pid otherwise.
+
 A shared room is spelled `shared:<name>`. An extra room named without a
 prefix gets one at join time, because `--also aerobasis` and
 `AGENTS_ROOM_SHARED=aerobasis` are the same room to a human and were two

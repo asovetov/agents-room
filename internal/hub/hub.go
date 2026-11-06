@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -127,8 +128,13 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 	if opt.Harness == "" {
 		opt.Harness = HarnessName()
 	}
+	// A session belongs to the harness chat, not to the process that happens
+	// to be joining. `agents-room join` and `agents-room mcp` are both
+	// short-lived, so os.Getpid() here names a process that exits within
+	// milliseconds; prune would then see the row as dead and delete a live
+	// chat. Callers that know the harness process pass it explicitly.
 	if opt.PID == 0 {
-		opt.PID = os.Getpid()
+		opt.PID = HarnessPIDFromEnv()
 	}
 	if opt.Autonomy < AutonomyNotify {
 		return nil, fmt.Errorf("autonomy must be 0, 1 or 2, got %d", opt.Autonomy)
@@ -822,6 +828,24 @@ func RepoRoom(dir string) string {
 		}
 	}
 	return "repo:" + filepath.Base(repoRoot(dir))
+}
+
+// HarnessPIDFromEnv returns the pid of the harness process this one was
+// spawned by, or 0 when the environment does not name one.
+//
+// The join and MCP processes are short-lived children of the chat, so their
+// own pid is gone by the time anyone asks whether the session is alive. The
+// parent pid is the one that lives as long as the chat does.
+func HarnessPIDFromEnv() int {
+	if v := strings.TrimSpace(os.Getenv("AGENTS_ROOM_PID")); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	if ppid := os.Getppid(); ppid > 1 {
+		return ppid
+	}
+	return 0
 }
 
 // HarnessKeyFromEnv returns the harness session id this process inherited, or
