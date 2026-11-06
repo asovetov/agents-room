@@ -198,14 +198,18 @@ func TestTouchUpdatesLastSeen(t *testing.T) {
 
 	old := h.now
 	t.Cleanup(func() { h.setClock(old) })
-	h.setClock(func() int64 { return old() + 100 })
+	// Capture the shifted time once. Evaluating old() again for the assertion
+	// reads the wall clock a second time, and a run that crosses a second
+	// boundary then fails with no code having changed.
+	moved := old() + 100
+	h.setClock(func() int64 { return moved })
 
 	if err := h.Touch(ctx, a.ID); err != nil {
 		t.Fatalf("touch: %v", err)
 	}
 	sessions, _ := h.Who(ctx, "repo:x")
-	if sessions[0].LastSeen != old()+100 {
-		t.Fatalf("last_seen = %d, want %d", sessions[0].LastSeen, old()+100)
+	if sessions[0].LastSeen != moved {
+		t.Fatalf("last_seen = %d, want %d", sessions[0].LastSeen, moved)
 	}
 }
 

@@ -409,3 +409,66 @@ func TestSentShowsAMessageWithNoRecipients(t *testing.T) {
 		t.Fatalf("sent did not say the message reached nobody:\n%s", out)
 	}
 }
+
+// doctor --fix removes the sessions that registered one chat more than once.
+// It is the one repair that deletes rows, so it does nothing without --fix,
+// and --dry-run shows the plan without touching the store.
+func TestDoctorFixRemovesDuplicateSessions(t *testing.T) {
+	run := setup(t)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	_, out, _ := run("join", "--room", "repo:x", "--key", "a")
+	keep := strings.TrimSpace(out)
+
+	// A second row on the same pid, the way the old room_join left one.
+	db, err := store.Open(os.Getenv("AGENTS_ROOM_DB"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	exec := func(q string) {
+		t.Helper()
+		if _, err := db.SQL().ExecContext(context.Background(), q); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	exec(`INSERT INTO sessions (id, room_id, harness, cwd, pid, label, tags, autonomy,
+	                            joined_at, last_seen, harness_key)
+	      SELECT 'dup1', room_id, harness, cwd, pid, label, tags, autonomy,
+	             joined_at, last_seen, '' FROM sessions LIMIT 1`)
+	exec(`INSERT INTO session_rooms (session_id, room_id, joined_at)
+	      SELECT 'dup1', room_id, joined_at FROM session_rooms WHERE session_id = '` + keep + `'`)
+
+	// Without --fix nothing changes.
+	_, plain, _ := run("doctor")
+	if strings.Contains(plain, "removed ") {
+		t.Fatalf("doctor removed a session without --fix:\n%s", plain)
+	}
+	if !strings.Contains(plain, "--fix") {
+		t.Fatalf("doctor did not offer --fix:\n%s", plain)
+	}
+
+	// --dry-run shows the plan and keeps both rows.
+	_, dry, _ := run("doctor", "--fix", "--dry-run")
+	if !strings.Contains(dry, "keep "+keep) {
+		t.Fatalf("dry run did not name the session it keeps:\n%s", dry)
+	}
+	if !strings.Contains(dry, "dup1") {
+		t.Fatalf("dry run did not name the session it removes:\n%s", dry)
+	}
+	if strings.Contains(dry, "removed ") {
+		t.Fatalf("dry run changed the store:\n%s", dry)
+	}
+
+	// --fix applies it, and the surviving session is the one with the key.
+	_, fixed, _ := run("doctor", "--fix")
+	if !strings.Contains(fixed, "removed 1 duplicate") {
+		t.Fatalf("--fix did not report the removal:\n%s", fixed)
+	}
+	_, who, _ := run("who", "--room", "repo:x")
+	if strings.Contains(who, "dup1") {
+		t.Fatalf("dup1 survived --fix:\n%s", who)
+	}
+	if !strings.Contains(who, keep) {
+		t.Fatalf("--fix removed the session it should keep:\n%s", who)
+	}
+}

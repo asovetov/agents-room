@@ -48,8 +48,9 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    legitimate. Revisit if agents keep missing it.
 5. Rooms created before join normalised the prefix stay split, because
    merging them would move sessions between rooms without their consent.
-   `doctor` names each split and the two commands that repair it; nothing
-   fixes one automatically.
+   `doctor` names each split and the two commands that repair it, and
+   `doctor --fix` collapses the duplicate-pid case but deliberately leaves a
+   split room alone: moving a session between rooms is the session's call.
 
 ## Ground rules for changes
 

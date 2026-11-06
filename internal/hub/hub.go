@@ -811,6 +811,81 @@ func (h *Hub) DuplicatePIDs(ctx context.Context) []DuplicatePID {
 	return out
 }
 
+// DuplicateFix is the session ids doctor would remove to collapse a chat that
+// registered more than once, and the id it keeps.
+type DuplicateFix struct {
+	PID     int      `json:"pid"`
+	Keep    string   `json:"keep"`
+	Remove  []string `json:"remove"`
+	Because string   `json:"because"`
+}
+
+// PlanDuplicateFix decides, for every pid that holds several sessions, which
+// one to keep.
+//
+// The rule is the one a person would apply by hand. A session with a harness
+// key is the one the harness keeps rejoining, so it survives; among sessions
+// without one, or with several, the oldest survives, because that is the one
+// that has been in the room longest and whose id other agents already have.
+// Nothing is removed here: the caller decides whether to apply it.
+func (h *Hub) PlanDuplicateFix(ctx context.Context) ([]DuplicateFix, error) {
+	dups := h.DuplicatePIDs(ctx)
+	out := make([]DuplicateFix, 0, len(dups))
+	for _, d := range dups {
+		type candidate struct {
+			id          string
+			harnessKey  string
+			joinedAt    int64
+		}
+		var cands []candidate
+		for _, id := range d.IDs {
+			var c candidate
+			if err := h.db.SQL().QueryRowContext(ctx,
+				`SELECT id, harness_key, joined_at FROM sessions WHERE id = ?`, id).
+				Scan(&c.id, &c.harnessKey, &c.joinedAt); err != nil {
+				continue
+			}
+			cands = append(cands, c)
+		}
+		if len(cands) < 2 {
+			continue
+		}
+
+		keep := cands[0]
+		because := "it joined first"
+		for _, c := range cands {
+			if c.harnessKey != "" && keep.harnessKey == "" {
+				keep, because = c, "it carries the harness key the chat rejoins with"
+			} else if c.harnessKey == "" && keep.harnessKey == "" && c.joinedAt < keep.joinedAt {
+				keep = c
+			}
+		}
+
+		fix := DuplicateFix{PID: d.PID, Keep: keep.id, Because: because}
+		for _, c := range cands {
+			if c.id != keep.id {
+				fix.Remove = append(fix.Remove, c.id)
+			}
+		}
+		out = append(out, fix)
+	}
+	return out, nil
+}
+
+// ApplyDuplicateFix removes the extra sessions a PlanDuplicateFix named.
+func (h *Hub) ApplyDuplicateFix(ctx context.Context, fixes []DuplicateFix) (int, error) {
+	n := 0
+	for _, f := range fixes {
+		for _, id := range f.Remove {
+			if err := h.Leave(ctx, id); err != nil {
+				return n, fmt.Errorf("remove duplicate %s: %w", id, err)
+			}
+			n++
+		}
+	}
+	return n, nil
+}
+
 // HasRoom reports whether a room with this name exists.
 func (h *Hub) HasRoom(ctx context.Context, name string) bool {
 	_, err := h.roomID(ctx, name)

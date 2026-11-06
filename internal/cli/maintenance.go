@@ -183,6 +183,8 @@ func reportConfig(stdout, stderr io.Writer, rep config.Report) {
 func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("doctor", flag.ContinueOnError)
 	fs.SetOutput(stderr)
+	fix := fs.Bool("fix", false, "apply the repairs doctor can make on its own")
+	dryRun := fs.Bool("dry-run", false, "with --fix, show what would change and stop")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -222,10 +224,14 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 				"Each of them rejoins once, then runs `agents-room leave --session <id> --room %s`",
 				split.Bare, split.Shared, split.Stranded, split.Bare)
 		}
-		for _, dup := range h.DuplicatePIDs(ctx) {
+		dups := h.DuplicatePIDs(ctx)
+		for _, dup := range dups {
 			line(false, "pid %d has %d sessions (%s); they are one chat split into several, so room_who overcounts. "+
 				"Update, rejoin with `--key`, then leave the extras",
 				dup.PID, len(dup.IDs), strings.Join(dup.IDs, ", "))
+		}
+		if len(dups) > 0 {
+			runDuplicateFix(ctx, h, stdout, stderr, *fix, *dryRun, &problems, line)
 		}
 		// A lease that lapses under a session that is still working is the
 		// case the TTL is meant to prevent, and nothing else can see it
@@ -288,6 +294,46 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 	}
 	fmt.Fprintf(stdout, "%d problem(s) found\n", problems)
 	return 1
+}
+
+// runDuplicateFix reports, and optionally applies, the removal of sessions
+// that registered one chat more than once.
+//
+// This is the one repair doctor makes that deletes rows, so it is opt-in
+// twice: --fix is needed to do anything, and --dry-run shows the plan without
+// touching the store. What it removes is decided by PlanDuplicateFix, not
+// here, so the reasoning lives with the data.
+func runDuplicateFix(ctx context.Context, h *hub.Hub, stdout, stderr io.Writer,
+	fix, dryRun bool, problems *int, line func(bool, string, ...any)) {
+
+	plan, err := h.PlanDuplicateFix(ctx)
+	if err != nil {
+		fmt.Fprintf(stderr, "doctor: plan duplicate fix: %v\n", err)
+		return
+	}
+	for _, f := range plan {
+		fmt.Fprintf(stdout, "     pid %d: keep %s (%s), remove %s\n",
+			f.PID, f.Keep, f.Because, strings.Join(f.Remove, ", "))
+	}
+	if !fix {
+		fmt.Fprintln(stdout, "     rerun with --fix to apply, or --fix --dry-run to see it without changing anything")
+		return
+	}
+	if dryRun {
+		fmt.Fprintln(stdout, "     --dry-run: nothing changed")
+		return
+	}
+
+	n, err := h.ApplyDuplicateFix(ctx, plan)
+	if err != nil {
+		fmt.Fprintf(stderr, "doctor: %v\n", err)
+		return
+	}
+	// The problem is gone, so it must not still be counted as one.
+	if *problems > 0 {
+		*problems--
+	}
+	fmt.Fprintf(stdout, "     removed %d duplicate session(s)\n", n)
 }
 
 // sessionName is what a human calls a session: its label when it has one,
