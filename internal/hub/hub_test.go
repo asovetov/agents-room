@@ -655,8 +655,15 @@ func TestRenewAllExtendsEveryLiveLease(t *testing.T) {
 			t.Fatalf("%s: expiry did not move (%d -> %d)", path, was, afterA[path])
 		}
 	}
-	if afterB["src/c.go"] != beforeB["src/c.go"] {
-		t.Fatal("RenewAll extended another session's lease")
+	// The stored path is absolute, so the key is looked up by its base name
+	// rather than by the relative path it was claimed with.
+	if len(beforeB) != 1 || len(afterB) != 1 {
+		t.Fatalf("b: %d leases before, %d after", len(beforeB), len(afterB))
+	}
+	for path, was := range beforeB {
+		if afterB[path] != was {
+			t.Fatalf("RenewAll extended another session's lease on %s (%d -> %d)", path, was, afterB[path])
+		}
 	}
 }
 
