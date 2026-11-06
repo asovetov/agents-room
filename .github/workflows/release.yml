@@ -25,10 +25,36 @@ jobs:
           cd dist
           sha256sum * > SHA256SUMS
 
+      # The checksum file is signed with the maintainer's key when it is
+      # available. Without the secret it is published unsigned rather than
+      # silently skipped, so a missing signature is visible.
+      - name: Import signing key
+        id: key
+        env:
+          RELEASE_GPG_PRIVATE_KEY: ${{ secrets.RELEASE_GPG_PRIVATE_KEY }}
+        run: |
+          if [ -z "$RELEASE_GPG_PRIVATE_KEY" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::RELEASE_GPG_PRIVATE_KEY is not set; SHA256SUMS will be unsigned"
+            exit 0
+          fi
+          printf '%s' "$RELEASE_GPG_PRIVATE_KEY" | gpg --batch --import
+          echo "available=true" >> "$GITHUB_OUTPUT"
+
+      - name: Sign checksums
+        if: steps.key.outputs.available == 'true'
+        run: |
+          cd dist
+          # Name the key explicitly: a keyring with several keys makes gpg
+          # pick the first one, which may not be the release key.
+          gpg --batch --yes \
+            --local-user 9E7AB401595DFD94C63BFB1FEF3CC6A257F1562B \
+            --armor --detach-sign SHA256SUMS
+
       - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "${GITHUB_REF_NAME}" dist/* \
             --title "${GITHUB_REF_NAME}" \
-            --notes "Binaries for Linux, macOS and Windows on amd64 and arm64. No cgo, no external runtime."
+            --notes-file docs/release-notes.md
