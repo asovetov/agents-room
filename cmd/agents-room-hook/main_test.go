@@ -146,3 +146,19 @@ func TestShortID(t *testing.T) {
 		t.Fatalf("shortID = %q", got)
 	}
 }
+
+func TestClaudeCodeNotifyNeverBlocksOrWakes(t *testing.T) {
+	line := "[agents-room] 1 unread; call msg_recv"
+
+	// At notify level the signal must ride the current turn and never
+	// produce a Stop block, because a Stop block is a hold.
+	for _, event := range []string{"Stop", "PostToolBatch", "UserPromptSubmit"} {
+		got := outputFor("claude-code", event, hub.AutonomyNotify, line)
+		if event == "Stop" && got != "" {
+			t.Fatalf("notify level produced a Stop block: %q", got)
+		}
+		if event != "Stop" && got == "" {
+			t.Fatalf("notify level produced nothing for %s", event)
+		}
+	}
+}
