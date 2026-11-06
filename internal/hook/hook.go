@@ -193,11 +193,16 @@ func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event
 			}
 		}
 	}
-	h.MarkOffered(ctx, self.ID, hub.StateOffered)
-
-	if out := outputFor(harness, event, self.Autonomy, res.Line); out != "" {
-		fmt.Fprintln(os.Stdout, out)
+	out := outputFor(harness, event, self.Autonomy, res.Line)
+	if out == "" {
+		// Nothing went out for this event at this level, and the delivery
+		// stays signallable. Marking it offered here would record a signal
+		// that was never emitted, and would hide the message from the next
+		// Stop that can actually hold.
+		return 0
 	}
+	h.MarkOffered(ctx, self.ID, hub.StateOffered)
+	fmt.Fprintln(os.Stdout, out)
 	return 0
 }
 
