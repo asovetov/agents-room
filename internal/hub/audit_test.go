@@ -299,7 +299,10 @@ func TestPruneStaleRemovesOnlyOldSessions(t *testing.T) {
 	ctx := context.Background()
 	h := newHub(t)
 
-	stale, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "stale"})
+	// The stale one belongs to a process that has exited: quiet and gone.
+	stale, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "stale", PID: deadPID(t),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +349,7 @@ func TestPruneStaleFindsSessionsBySharedMembership(t *testing.T) {
 
 	stale, err := h.Join(ctx, JoinOptions{
 		Room: "repo:gcs", ExtraRooms: []string{"shared:aerobasis"},
-		Harness: "test", HarnessKey: "stale",
+		Harness: "test", HarnessKey: "stale", PID: deadPID(t),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -375,6 +378,46 @@ func TestPruneStaleFindsSessionsBySharedMembership(t *testing.T) {
 	}
 	if who[0].ID == stale.ID {
 		t.Fatal("the stale session survived")
+	}
+}
+
+// A quiet session whose process is still running is working, not stale.
+// Pruning it would delete the row and release the leases on files it is
+// still writing, letting another agent claim them.
+func TestPruneStaleKeepsAQuietLiveProcess(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	// Default pid is the test process itself, which is very much alive.
+	live, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "quiet-but-working",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, _ := h.Claim(ctx, live.ID, "src/in-progress.go", 7200, ModeExclusive); !r.OK {
+		t.Fatal("claim failed")
+	}
+
+	old := h.now
+	t.Cleanup(func() { h.setClock(old) })
+	h.setClock(func() int64 { return old() + 3600 })
+
+	n, err := h.PruneStale(ctx, "repo:x", 30*time.Minute)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("pruned %d sessions, want 0: the process is alive", n)
+	}
+
+	sessions, _ := h.Who(ctx, "repo:x")
+	if len(sessions) != 1 || sessions[0].ID != live.ID {
+		t.Fatalf("the quiet live session disappeared: %+v", sessions)
+	}
+	leases, _ := h.List(ctx, live.ID)
+	if len(leases) != 1 {
+		t.Fatalf("%d leases left, want the one it holds", len(leases))
 	}
 }
 
