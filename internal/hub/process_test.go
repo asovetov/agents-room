@@ -17,7 +17,7 @@ import (
 // letting it exit gives a pid the OS has just retired.
 func deadPID(t *testing.T) int {
 	t.Helper()
-	if runtime.GOOS == "windows" {
+	if !hasProcFS {
 		t.Skip("starting and reaping a process for a retired pid is not reliable here")
 	}
 	cmd := exec.Command("true")
@@ -90,7 +90,7 @@ func TestHarnessPIDHelperProcess(t *testing.T) {
 // the nearest parent is not enough: a hook runs under a shell that exits
 // immediately, so the chain is followed until a known harness appears.
 func TestHarnessPIDIsNotTheImmediateParent(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if !hasProcFS {
 		t.Skip("process names are read from /proc on this path")
 	}
 	pid := HarnessPIDFromEnv()
@@ -122,7 +122,7 @@ func TestJoinKeepsExplicitPID(t *testing.T) {
 // The old check asked only "is this pid alive", which answers about the
 // stranger that inherited the number and calls a dead chat present.
 func TestLivenessRejectsReusedPID(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if !hasProcFS {
 		t.Skip("start times are read from /proc on this path")
 	}
 	self := os.Getpid()
@@ -163,7 +163,7 @@ func TestLivenessWithoutStartTimeFallsBackToThePID(t *testing.T) {
 // The join has to record the start time, or the row cannot tell its own
 // process from a later one that inherits the number.
 func TestJoinRecordsTheStartTimeOfThePID(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if !hasProcFS {
 		t.Skip("start times are read from /proc on this path")
 	}
 	ctx := context.Background()
@@ -206,7 +206,7 @@ func standInChat(t *testing.T, key string) int {
 // is running as now. It must only do that for a row this process owns: an
 // operator touching another session must not attach its own pid to it.
 func TestTouchRefreshesPIDOnlyForItsOwnSession(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if !hasProcFS {
 		t.Skip("process start times are read from /proc on this path")
 	}
 	ctx := context.Background()

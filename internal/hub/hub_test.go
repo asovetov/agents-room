@@ -4,7 +4,6 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -831,7 +830,7 @@ func TestPlanDuplicateFixKeepsTheOldestWithoutKeys(t *testing.T) {
 // process it names: while that process lived it carried the chat's session id
 // in its environment. The test process stands in for it.
 func TestDuplicatePIDsFindsRowsThatShareAHarnessKey(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if !hasProcFS {
 		t.Skip("process environments are read from /proc on this path")
 	}
 	ctx := context.Background()
@@ -879,7 +878,7 @@ func TestApplyDuplicateFixMovesDeliveriesToTheKeptSession(t *testing.T) {
 	ctx := context.Background()
 	h := newHub(t)
 
-	if runtime.GOOS == "windows" {
+	if !hasProcFS {
 		t.Skip("process environments are read from /proc on this path")
 	}
 	sender := join(t, h, "repo:x", "sender")

@@ -54,11 +54,15 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    A split was also how one chat came to be reported twice, so the two
    findings were often the same defect seen from two sides; collapsing the
    duplicate can make the split finding go away with it.
-6. Liveness on Windows falls back to the pid, because reading another
-   process's environment there needs `DebugActiveProcess` and a heap walk.
-   The fallback is the weaker check: a restarted MCP server leaves the row's
-   pid stale and the row reads as `gone` while the chat works. The harness
-   key would fix it; nobody has needed it enough to write the walk.
+6. Liveness is exact only on Linux, which is the only supported platform with
+   `/proc`. On Windows and macOS the pid, start time and process environment
+   are all unavailable without a platform-specific syscall, so liveness falls
+   back to "is the pid running" and duplicate rows cannot be tied back to
+   their chat. The fallback is weaker in one direction: a restarted MCP
+   server leaves the row's pid stale and the row can read as `gone` while the
+   chat works. Nothing is guessed from it — a session with no pid is never
+   pruned — and `prune` and `room_who` take the same fallback, so they still
+   agree with each other.
 
 ## Ground rules for changes
 

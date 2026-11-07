@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build linux
 
 package hub
 
@@ -164,3 +164,7 @@ func processAlive(pid int) bool {
 		return true
 	}
 }
+
+// hasProcFS reports that this platform can answer the process questions the
+// tests exercise.
+const hasProcFS = true

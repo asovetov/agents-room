@@ -56,3 +56,7 @@ func processAlive(pid int) bool {
 	}
 	return errno != errorInvalidParameter
 }
+
+// hasProcFS is false on Windows: there is no /proc, and the tests that read
+// one skip here rather than assert a fallback they were not written for.
+const hasProcFS = false

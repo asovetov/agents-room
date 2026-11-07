@@ -551,10 +551,12 @@ func (h *Hub) sessionRoomIDs(ctx context.Context, sessionID string) ([]string, e
 // sitting in a long edit, is quiet while very much alive; pruning it would
 // delete the row and release the leases on files it is still writing.
 //
-// "Gone" is LivenessGone, not "the pid is not running". A pid is a number the
-// OS reuses, and a session whose recorded process has exited can still find
-// something else running at that number; the start time recorded with the pid
-// is what keeps that from reading as a live chat.
+// "Gone" is what room_who would call gone, decided by the same function. The
+// two must not disagree: pruning a session room_who still shows as alive, or
+// keeping one it shows as gone, leaves the operator with two commands that
+// contradict each other. So the pid is not the test here either -- a chat
+// whose MCP server was restarted keeps working under a pid the row no longer
+// records -- and the harness key is.
 func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration) (int, error) {
 	roomID, err := h.roomID(ctx, room)
 	if errors.Is(err, store.ErrNotFound) {
@@ -569,25 +571,29 @@ func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration)
 	// Filtering on room_id would make `prune --room shared:storefront` see
 	// nobody: a session's primary room is the one it joined first.
 	rows, err := h.db.SQL().QueryContext(ctx, `
-		SELECT s.id, s.pid, s.pid_started_at FROM sessions s
+		SELECT s.id, s.pid, s.pid_started_at, s.harness_key FROM sessions s
 		JOIN session_rooms sr ON sr.session_id = s.id
 		WHERE sr.room_id = ? AND s.last_seen < ?`, roomID, cutoff)
 	if err != nil {
 		return 0, fmt.Errorf("prune: list stale: %w", err)
 	}
+	// The same scan room_who uses, so both give the same answer about the
+	// same row.
+	liveKeys, keysKnown := liveHarnessKeys()
 	var ids []string
 	for rows.Next() {
 		var id string
 		var pid int
 		var startedAt int64
-		if err := rows.Scan(&id, &pid, &startedAt); err != nil {
+		var harnessKey string
+		if err := rows.Scan(&id, &pid, &startedAt, &harnessKey); err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("prune: scan: %w", err)
 		}
 		// Quiet but running is not stale: the agent is thinking or editing.
-		// A row with no pid at all is never pruned either -- that is an
-		// unknown, and deleting on a guess would take a live chat's leases.
-		if livenessOf(pid, startedAt) != LivenessGone {
+		// A row that is unknown is never pruned either -- deleting on a guess
+		// would take a live chat's leases.
+		if sessionLiveness(harnessKey, pid, startedAt, liveKeys, keysKnown) != LivenessGone {
 			continue
 		}
 		ids = append(ids, id)
