@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -513,12 +514,14 @@ func TestWhoShowsLiveness(t *testing.T) {
 // table said nothing at all, which read as "present".
 func TestWhoShowsGoneSession(t *testing.T) {
 	run := setup(t)
-	t.Setenv("AGENTS_ROOM_PID", "4242")
+	// A pid the OS has just retired. A made-up number is not safe: 4242 was
+	// running on the macOS runner, and the test then asserted the opposite of
+	// what it had built.
+	t.Setenv("AGENTS_ROOM_PID", strconv.Itoa(retiredPID(t)))
 	_, out, _ := run("join", "--room", "repo:x", "--key", "gone")
 	id := strings.TrimSpace(out)
 
-	// 4242 is not running, and the row records no start time, so the pid
-	// alone decides: gone.
+	// The row records no start time, so the pid alone has to decide: gone.
 	db, err := store.Open(os.Getenv("AGENTS_ROOM_DB"))
 	if err != nil {
 		t.Fatalf("open store: %v", err)
@@ -542,7 +545,7 @@ func TestWhoShowsGoneSession(t *testing.T) {
 // check reads the store, and the store cannot tell dead from thinking.
 func TestDoctorReportsGoneSessions(t *testing.T) {
 	run := setup(t)
-	t.Setenv("AGENTS_ROOM_PID", "4242")
+	t.Setenv("AGENTS_ROOM_PID", strconv.Itoa(retiredPID(t)))
 	run("join", "--room", hub.RepoRoom(""), "--key", "gone")
 
 	_, out, _ := run("doctor")
@@ -552,4 +555,19 @@ func TestDoctorReportsGoneSessions(t *testing.T) {
 	if !strings.Contains(out, "prune") {
 		t.Fatalf("doctor named the problem without naming the repair:\n%s", out)
 	}
+}
+
+// retiredPID returns a pid that belongs to no running process.
+//
+// A hard-coded number is not safe: 4242 happened to be running on the macOS
+// runner, and a test that asserts "gone" then asserts the opposite of what it
+// built. Starting a process and letting it exit gives a number the OS has
+// just retired.
+func retiredPID(t *testing.T) int {
+	t.Helper()
+	cmd := exec.Command("true")
+	if err := cmd.Run(); err != nil {
+		t.Skipf("cannot start a helper process: %v", err)
+	}
+	return cmd.Process.Pid
 }
