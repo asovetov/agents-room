@@ -41,16 +41,33 @@ The MCP 2026-07-28 revision removed protocol sessions and
 server-initiated requests, and asks servers to mint a handle the model passes
 back; this follows that shape.
 
-A session's `last_seen` updates whenever it calls a tool, so `room_who` shows
-who is alive. The MCP server does this in one middleware over `tools/call`,
-so a tool added later inherits it without its own `Touch` call. `prune` reads
-the same membership table as `room_who`, so a session reachable only through
-a shared room can still be swept from that room.
+A session's `last_seen` updates whenever it calls a tool. The MCP server does
+this in one middleware over `tools/call`, so a tool added later inherits it
+without its own `Touch` call. `prune` reads the same membership table as
+`room_who`, so a session reachable only through a shared room can still be
+swept from that room.
 
-Because `last_seen` only moves on a tool call or a nudge, a quiet session can
-be very much alive. `prune` therefore removes a session only when it has also
-been quiet longer than the threshold **and** its pid is gone; it releases no
-leases for a process that still exists.
+**`last_seen` is activity, not liveness.** A chat thinking through a long
+edit and a chat that exited an hour ago are indistinguishable by it, so
+`room_who` reports a separate `liveness` of `alive`, `gone` or `unknown`:
+
+- `alive` and `gone` are decided from the **harness key**. The scan of running
+  processes is asked which keys are in any process's environment; a chat
+  keeps its key across MCP restarts, which the pid does not.
+- `unknown` means the row records no pid at all, which is not the same as
+  gone. The join could not find a harness process, and guessing would delete
+  a live chat's leases.
+
+`prune` removes a session only when it has been quiet longer than the
+threshold **and** it is `gone`; it releases no leases for a chat that still
+exists.
+
+A pid alone is not an identity. When a chat exits its number is free, and the
+next process the OS hands it to is a stranger: an "is this pid alive" check
+then answers about the stranger and calls a dead session present. Each row
+therefore records `pid_started_at` with the pid, and the pair names one
+process. A row written before the column existed has `0` there and falls back
+to the pid, which is the older, weaker check.
 
 The pid has to be the harness process, not the process that joined: `join`
 and `mcp` are short-lived children of the chat, so their own pid is dead
@@ -59,6 +76,12 @@ under a shell that exits at once. A session records `AGENTS_ROOM_PID` when it
 is set; otherwise the process chain is walked until a known harness name
 (`claude`, `codex`, `hermes`) appears. When none is found, the session
 records no pid and prune keeps it, which is the safe direction.
+
+`Touch` refreshes the pid along with `last_seen`, because a tool call proves
+which process the chat is running as now. Without that the pid goes stale the
+first time the MCP server is restarted under a live chat. The refresh applies
+only to the row this process owns, matched by harness key, so an operator
+touching another session cannot attach its own pid to it.
 
 A shared room is spelled `shared:<name>`. An extra room named without a
 prefix gets one at join time, because `--also aerobasis` and
@@ -124,6 +147,12 @@ Knowing how many were addressed is not the same as knowing whether they read
 it. `msg_sent` (and `agents-room sent`) lists what a session sent with a
 per-state tally and a `pending` count, so a sender can tell a slow reader from
 a message nobody ever picked up.
+
+A recipient that leaves with the message unread is reported separately as
+`left`, not as pending. Its delivery is deleted with the session, so counting
+only the rows on disk would say "still waiting" about a session that no
+longer exists. The recipient count recorded in the `message.send` event is
+what makes the difference visible: `sent == recipients + left`.
 
 ## Delivery states
 
@@ -206,13 +235,13 @@ for it. Re-read before editing.
 | `room_join` | `room?`, `extra_rooms?`, `label?`, `tags?`, `autonomy?`, `harness?`, `harness_key?` | `session_id`, `rooms`, `autonomy`, `warning?` |
 | `room_leave` | `session_id` | nothing, leaves every room |
 | `room_leave_room` | `session_id`, `room` | nothing, stays in the rest |
-| `room_who` | `session_id?`, `room?` | sessions |
+| `room_who` | `session_id?`, `room?` | sessions, each with `liveness` |
 | `room_set_autonomy_cap` | `session_id?`, `room?`, `autonomy` | `room`, `autonomy` |
 | `msg_send` | `session_id`, `to`, `subject?`, `body?`, `reply_to?`, `ttl_s?` | `message_id`, `recipients` |
 | `msg_recv` | `session_id`, `limit?` | messages, marked read |
 | `msg_ack` | `session_id`, `message_id` | nothing |
 | `msg_unread` | `session_id` | `count` |
-| `msg_sent` | `session_id`, `limit?` | `messages`: each with `states` and `pending` |
+| `msg_sent` | `session_id`, `limit?` | `messages`: each with `states`, `pending`, `left`, `sent` |
 | `lease_claim` | `session_id`, `path`, `ttl_s?`, `mode?` | `ok`, `holder`, `reason` |
 | `lease_renew` | `session_id`, `path`, `ttl_s?` | the renewed lease |
 | `lease_release` | `session_id`, `path` | nothing |

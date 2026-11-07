@@ -140,15 +140,25 @@ in place would make hooks fail silently.
 
 `agents-room doctor` reports the store, the schema version, which harness
 configs are wired up, whether an old command name is still around, a room
-split by an old prefix bug, one chat registered under several ids, and a
-lease about to lapse.
+split by an old prefix bug, one chat registered under several ids, a lease
+about to lapse, and the sessions whose chat is no longer running.
 
 `agents-room doctor --fix` applies the repairs it can decide alone, which is
 collapsing a chat that registered more than once. It keeps the session that
 carries the harness key, or the oldest one when none does, and removes the
-rest. `--fix --dry-run` prints the plan without touching the store. A split
-room is reported but never merged automatically: moving a session between
-rooms is the session's decision, not doctor's.
+rest -- moving any message the removed row still had unread to the session
+that survives, because that row was a real member of the room and a delivery
+deleted with it is a message nobody ever read. `--fix --dry-run` prints the
+plan without touching the store. A split room is reported but never merged
+automatically: moving a session between rooms is the session's decision, not
+doctor's.
+
+`agents-room who` shows each session's `liveness`: `alive`, `gone`, or
+`unknown` when no pid was recorded. It is not the same as `last_seen`. A chat
+thinking through a long edit and a chat that exited look identical by
+activity, and the difference decides whether a file it holds is really held.
+Liveness is decided from the harness key, which survives an MCP restart,
+rather than from the pid, which does not.
 
 ## Status
 

@@ -113,6 +113,29 @@ var migrations = []migration{
 			return nil
 		},
 	},
+	{
+		version: 5,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			// A pid is not an identity. When the chat that owns a session row
+			// exits, its number is free, and the next process the OS hands it
+			// to is not that chat. An "is this pid alive" check then answers
+			// about a stranger: room_who calls a dead session present, and
+			// prune keeps it because something is running at that number.
+			//
+			// pid_started_at is the process's start time, read at the moment
+			// the pid was recorded. The pair names one process rather than
+			// one number, so a reused pid is recognised as a different one.
+			//
+			// It defaults to 0, which every caller reads as "not recorded",
+			// so rows written by an older binary keep the old, more cautious
+			// reading instead of being declared dead on a guess.
+			if _, err := conn.ExecContext(ctx,
+				`ALTER TABLE sessions ADD COLUMN pid_started_at INTEGER NOT NULL DEFAULT 0`); err != nil {
+				return fmt.Errorf("migration 5: %w", err)
+			}
+			return nil
+		},
+	},
 }
 
 // migrate applies every step the database has not seen yet.

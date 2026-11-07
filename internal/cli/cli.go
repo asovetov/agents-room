@@ -223,10 +223,15 @@ func runWho(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 
 	tw := tabwriter.NewWriter(stdout, 0, 4, 2, ' ', 0)
-	fmt.Fprintln(tw, "SESSION\tHARNESS\tAUTONOMY\tROOMS\tLABEL\tTAGS")
+	// Liveness is a column of its own because last_seen cannot stand in for
+	// it: a chat thinking through a long edit and a chat that exited an hour
+	// ago look the same in "seen 60m ago", and the difference decides whether
+	// a file is really held.
+	fmt.Fprintln(tw, "SESSION\tSTATE\tHARNESS\tAUTONOMY\tROOMS\tLABEL\tTAGS")
 	for _, s := range sessions {
-		fmt.Fprintf(tw, "%s\t%s\t%d\t%s\t%s\t%v\n",
-			s.ID, s.Harness, s.Autonomy, strings.Join(s.Rooms, ","), s.Label, s.Tags)
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%d\t%s\t%s\t%v\n",
+			s.ID, livenessWord(s.Liveness), s.Harness, s.Autonomy,
+			strings.Join(s.Rooms, ","), s.Label, s.Tags)
 	}
 	if err := tw.Flush(); err != nil {
 		return fail(stderr, err)
@@ -385,10 +390,27 @@ func runSent(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 			time.Unix(s.CreatedAt, 0).Format(time.RFC3339),
 			describeStates(s.States))
 		if s.Pending > 0 {
-			fmt.Fprintf(stdout, "  %d recipient(s) have not read it yet\n", s.Pending)
+			fmt.Fprintf(stdout, "  %d of %d recipient(s) have not read it yet\n",
+				s.Pending, s.Sent)
+		}
+		// A recipient that left is not one that is still waiting. Saying so
+		// separately is the difference between "keep watching" and "this one
+		// is never going to answer".
+		if s.Left > 0 {
+			fmt.Fprintf(stdout, "  %d recipient(s) left the room before reading it\n", s.Left)
 		}
 	}
 	return 0
+}
+
+// livenessWord renders a session's liveness for the who table. "unknown" is
+// spelled out rather than left blank: an empty cell reads as "alive enough",
+// and the whole point is that nobody knows.
+func livenessWord(liveness string) string {
+	if liveness == "" {
+		return hub.LivenessUnknown
+	}
+	return liveness
 }
 
 // describeStates renders a delivery-state tally in a fixed order, so two runs

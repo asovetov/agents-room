@@ -226,13 +226,17 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		}
 		dups := h.DuplicatePIDs(ctx)
 		for _, dup := range dups {
-			line(false, "pid %d has %d sessions (%s); they are one chat split into several, so room_who overcounts. "+
+			line(false, "%s %s has %d sessions (%s); they are one chat split into several, so room_who overcounts. "+
 				"Update, rejoin with `--key`, then leave the extras",
-				dup.PID, len(dup.IDs), strings.Join(dup.IDs, ", "))
+				dup.Kind, dup.Identity, len(dup.IDs), strings.Join(dup.IDs, ", "))
 		}
 		if len(dups) > 0 {
 			runDuplicateFix(ctx, h, stdout, stderr, *fix, *dryRun, &problems, line)
 		}
+		// Read after the duplicate fix: it can collapse two rows into one, and
+		// reporting the rows it removed as "gone sessions to prune" would send
+		// the operator after sessions that no longer exist.
+		reportGoneSessions(ctx, h, stdout, line)
 		// A lease that lapses under a session that is still working is the
 		// case the TTL is meant to prevent, and nothing else can see it
 		// coming. The hook renews on every tool event, so a warning here
@@ -312,8 +316,16 @@ func runDuplicateFix(ctx context.Context, h *hub.Hub, stdout, stderr io.Writer,
 		return
 	}
 	for _, f := range plan {
-		fmt.Fprintf(stdout, "     pid %d: keep %s (%s), remove %s\n",
-			f.PID, f.Keep, f.Because, strings.Join(f.Remove, ", "))
+		// What ties the rows together is sometimes a key and sometimes a pid,
+		// so the plan says which, rather than always claiming a pid.
+		fmt.Fprintf(stdout, "     %s %s: keep %s (%s), remove %s",
+			f.Kind, f.Identity, f.Keep, f.Because, strings.Join(f.Remove, ", "))
+		if f.Moved > 0 {
+			// The count matters before the fix runs: it is the number of
+			// messages that would be lost if the rows were simply deleted.
+			fmt.Fprintf(stdout, "; %d unread delivery(ies) move to the kept session", f.Moved)
+		}
+		fmt.Fprintln(stdout)
 	}
 	if !fix {
 		fmt.Fprintln(stdout, "     rerun with --fix to apply, or --fix --dry-run to see it without changing anything")
@@ -334,6 +346,48 @@ func runDuplicateFix(ctx context.Context, h *hub.Hub, stdout, stderr io.Writer,
 		*problems--
 	}
 	fmt.Fprintf(stdout, "     removed %d duplicate session(s)\n", n)
+}
+
+// reportGoneSessions names rows whose chat is no longer running.
+//
+// It is the one thing doctor could not see before: every other check reads
+// the store, and the store cannot tell a thinking agent from a dead one. The
+// row is not a problem with the installation, so it does not count toward the
+// exit status; it is housekeeping the operator can choose to do, and the
+// command that does it is named.
+func reportGoneSessions(ctx context.Context, h *hub.Hub, stdout io.Writer, line func(bool, string, ...any)) {
+	gone := 0
+	names := []string{}
+	for _, room := range h.RoomNames(ctx) {
+		sessions, err := h.Who(ctx, room)
+		if err != nil {
+			continue
+		}
+		for _, s := range sessions {
+			// Rooms overlap, so one session is met in each of its rooms.
+			if s.Liveness != hub.LivenessGone {
+				continue
+			}
+			name := sessionName(s)
+			already := false
+			for _, seen := range names {
+				if seen == name {
+					already = true
+					break
+				}
+			}
+			if !already {
+				names = append(names, name)
+				gone++
+			}
+		}
+	}
+	if gone == 0 {
+		return
+	}
+	fmt.Fprintf(stdout, "     %d session(s) whose chat is no longer running: %s\n",
+		gone, strings.Join(names, ", "))
+	fmt.Fprintln(stdout, "     `agents-room prune --older-than 1` removes them once they have been quiet that long")
 }
 
 // sessionName is what a human calls a session: its label when it has one,

@@ -3,6 +3,7 @@ package hub
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	pathpkg "path"
@@ -442,6 +443,14 @@ type Sent struct {
 	// Pending is recipients whose delivery has not reached a terminal state:
 	// the message is still waiting on them.
 	Pending int `json:"pending"`
+	// Left is recipients that went away with the message unread. Their
+	// delivery is gone, so Pending alone would have said "still waiting",
+	// which is untrue: there is nobody left to wait for.
+	Left int `json:"left"`
+	// Sent is how many recipients the send resolved, read from the send
+	// event. Recipients counts the deliveries still on disk, and a session
+	// that leaves takes its delivery with it, so Sent == Recipients + Left.
+	Sent int `json:"sent"`
 }
 
 // SentMessages lists what a session sent, newest first, with delivery states.
@@ -485,8 +494,40 @@ func (h *Hub) SentMessages(ctx context.Context, sessionID string, limit int) ([]
 		for _, state := range []string{StateStored, StateOffered, StateAccepted} {
 			out[i].Pending += states[state]
 		}
+		// The send event recorded how many recipients resolved at send time.
+		// Comparing it with the rows still on disk is what turns "3 have not
+		// read it" into the truth when one of the three walked out.
+		if n, err := h.recipientsAtSend(ctx, out[i].ID); err == nil && n > 0 {
+			out[i].Sent = n
+			if gone := n - out[i].Recipients; gone > 0 {
+				out[i].Left = gone
+			}
+		} else {
+			out[i].Sent = out[i].Recipients
+		}
 	}
 	return out, nil
+}
+
+// recipientsAtSend reads the recipient count recorded when a message was
+// sent. It is the only place the original number survives, because a
+// delivery is deleted with the session that held it.
+func (h *Hub) recipientsAtSend(ctx context.Context, messageID string) (int, error) {
+	var payload string
+	err := h.db.SQL().QueryRowContext(ctx, `
+		SELECT payload FROM events
+		WHERE kind = 'message.send' AND payload LIKE ? LIMIT 1`,
+		"%"+messageID+"%").Scan(&payload)
+	if err != nil {
+		return 0, err
+	}
+	var p struct {
+		Recipients int `json:"recipients"`
+	}
+	if err := json.Unmarshal([]byte(payload), &p); err != nil {
+		return 0, err
+	}
+	return p.Recipients, nil
 }
 
 // deliveryStates counts one message's deliveries by state.

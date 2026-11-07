@@ -49,8 +49,16 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
 5. Rooms created before join normalised the prefix stay split, because
    merging them would move sessions between rooms without their consent.
    `doctor` names each split and the two commands that repair it, and
-   `doctor --fix` collapses the duplicate-pid case but deliberately leaves a
+   `doctor --fix` collapses the duplicate-chat case but deliberately leaves a
    split room alone: moving a session between rooms is the session's call.
+   A split was also how one chat came to be reported twice, so the two
+   findings were often the same defect seen from two sides; collapsing the
+   duplicate can make the split finding go away with it.
+6. Liveness on Windows falls back to the pid, because reading another
+   process's environment there needs `DebugActiveProcess` and a heap walk.
+   The fallback is the weaker check: a restarted MCP server leaves the row's
+   pid stale and the row reads as `gone` while the chat works. The harness
+   key would fix it; nobody has needed it enough to write the walk.
 
 ## Ground rules for changes
 
