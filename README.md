@@ -1,65 +1,126 @@
 # agents-room
 
-Coordination for AI coding agents that share a codebase.
+Coordination for AI coding agents that work in different repositories and
+have to agree with each other.
 
 [Русская версия →](README.ru.md)
 
-You have five agent sessions open on one project. Each one edits files,
-decides things, and moves on. Nothing tells session two that session one is
-already rewriting `src/mavlink/`. Nothing tells the agent in the sibling
-repository that the wire format changed. You end up the courier, copying
-messages between windows.
+## The problem
 
-agents-room is the missing layer. It answers three questions the harnesses
-do not:
+A team keeps three repositories: `api` (a REST service), `web` (the storefront
+that calls it) and `mobile` (the app). Each has its own agent sessions, in
+its own terminal, often with its own harness.
 
-- **Who is here?** Which sessions are working in this project right now, and
-  which of them are actually still running.
-- **Who is touching this file?** Leases on paths, with expiry and stale-holder
-  detection.
+The mobile agent needs a field the API does not return yet. The API agent is
+midway through renaming something else. The web agent is building against the
+current shape and will break if the rename lands without them knowing.
+
+Nothing in any harness connects those three windows. So you become the
+courier: you copy the request from one chat into another, you remember who
+promised what, and you find out about the break when the build fails.
+
+agents-room is the layer that is missing. It lets agents in **different
+repositories** meet in a room, say what they need from each other, and hold
+the files they are working on while the agreement is being made.
+
+It answers three questions the harnesses do not:
+
+- **Who is working on this interface?** Which sessions are in the room, in
+  which repository, and which of them are actually still running.
+- **Who is touching this file?** Leases on paths, with expiry and
+  stale-holder detection — across repositories, not just within one.
 - **Is my read still valid?** A warning when a file changed under you.
 
 It also delivers messages addressed by *what* rather than *who*:
-`file:src/mavlink/**` reaches whoever holds those files, `tag:protocol`
-reaches everyone working on the protocol.
+`file:src/api/users.go` reaches whoever holds that file, in whatever
+repository they sit; `tag:mobile` reaches everyone working on the mobile
+client.
+
+The same works inside one repository, when several sessions share a codebase.
+That is the simpler case, and it comes for free.
 
 ## A session, in thirty seconds
 
 ```bash
-agents-room join --label "MAVLink dialect" --tag protocol   # prints a session id
-agents-room who                                             # who is here
-agents-room lease claim --session $ID --path src/wire.go    # claim a file
-agents-room send --session $ID --to file:src/mavlink/** \
-  --subject "dialect changed" --body "bump to v3"
+# In the api repository: join the room the three projects share.
+agents-room join --also shared:storefront --label "users API" --tag backend
+
+# In the mobile repository: ask whoever holds the users endpoint.
+agents-room send --session $ID --to file:src/api/users.go \
+  --subject "need a phone field" --body "for the profile screen"
+
+# The api agent claims the file before editing, so the others can see it.
+agents-room lease claim --session $ID --path src/api/users.go
 ```
 
 That is the whole loop. Everything else — MCP tools, harness hooks, autonomy
 levels — is about making it happen without you typing.
 
+## How the repositories meet
+
+Every session joins `repo:<name of its directory>` automatically. Those rooms
+stay separate: agents in `api` do not see `web`'s work unless they are asked
+to.
+
+To work across repositories, sessions join a **shared room** — a named group
+that any repository can enter:
+
+```bash
+agents-room join --also shared:storefront
+```
+
+A shared room is not a merge of the repository rooms. It is a meeting point:
+`api`, `web` and `mobile` each keep their own room, and the agents that opted
+in can reach each other in the shared one. Leases, messages and tags all work
+there, so an agent in `mobile` can hold a file in `api` while it asks for the
+change.
+
+The hook discovers shared rooms from two optional sources, so nobody has to
+remember a flag:
+
+```bash
+# once, in your shell profile: every repository on this machine
+export AGENTS_ROOM_SHARED=storefront
+```
+
+```text
+# <repository>/.agents-room/shared-rooms: travels with the checkout
+storefront
+```
+
+A `join` run from the CLI or an MCP tool does not read those sources — pass
+`--also storefront` or `extra_rooms` yourself there. The `shared:` prefix is
+added when missing, so `storefront` and `shared:storefront` are one room, not
+two that look alike.
+
 ## Why not just use the harness
 
 Most harnesses can message another session if you know its id. They do not
-know who is in the project, which files are contested, or whether the agent
-that was editing a file is still alive. That is the gap this fills.
+know which sessions are working on the interface you are about to change,
+which files are contested, or whether the agent that was editing a file is
+still alive. That is the gap this fills.
 
 | | Harness messaging | agents-room |
 |---|---|---|
 | Reach a session by id | yes | yes |
-| Reach whoever holds a file | no | yes, `file:` selector |
-| Reach everyone on a topic | no | yes, `tag:` selector |
-| Know who is in the project | no | yes, `who` |
+| Reach whoever holds a file, in any repository | no | yes, `file:` selector |
+| Reach everyone on a topic, across repositories | no | yes, `tag:` selector |
+| Know who is in the room | no | yes, `who` |
 | Know if a chat is still running | no | yes, `alive` / `gone` |
 | Stop two agents editing one file | no | yes, leases |
 | Warn that a file moved under you | no | yes, drift |
-| Work across repositories | no | yes, shared rooms |
+| Meet agents from other repositories | no | yes, shared rooms |
 
 ## What it is not
 
 - **Not a chat platform.** Lasting decisions belong in your long-term memory
-  tool. Messages here are coordination, and they expire.
+  tool or in the pull request. Messages here are coordination, and they
+  expire.
 - **Not a daemon.** There is no service to start, no port, no pid file.
 - **Not multi-machine.** One machine, one store. That is a deliberate limit.
 - **Not a harness replacement.** It plugs into what you already run.
+- **Not a merge of your repositories.** A shared room is a meeting point, not
+  a shared checkout. Nothing is copied between working trees.
 
 ## How it works
 
@@ -68,7 +129,8 @@ the CLI, the MCP server, each hook — is a short-lived process that opens it
 directly.
 
 ```
-   Claude Code        Codex           Hermes        (any MCP client)
+   api repo           web repo         mobile repo       (any MCP client)
+   Claude Code        Codex            Hermes
        │                │                │
    MCP + hook       MCP + hook          MCP
        └────────────────┴────────────────┘
@@ -81,42 +143,15 @@ directly.
 No daemon means no port to manage, no orphan process, and no way for a
 crashed agent to take the shared state down with it. Concurrency is SQLite's
 job: a lease is claimed inside `BEGIN IMMEDIATE`, so two agents claiming one
-file cannot both win.
-
-## Rooms
-
-Every session joins `repo:<name of the current directory>`. That is where it
-is found by default.
-
-A session can also join **shared rooms** — named groups that cross
-repositories. Agents in `gcs`, `link` and `aerobasis-link` that all join
-`shared:aerobasis` can message each other and contend for the same files.
-That is what makes contract work across repositories possible.
-
-The hook discovers shared rooms from two optional sources, so a team does not
-have to remember a flag on every session:
-
-```bash
-# once, in your shell profile: every repository on this machine
-export AGENTS_ROOM_SHARED=aerobasis
-```
-
-```text
-# <repository>/.agents-room/shared-rooms: travels with the checkout
-aerobasis
-```
-
-A `join` run from the CLI or an MCP tool does not read those sources — pass
-`--also aerobasis` or `extra_rooms` yourself there. The `shared:` prefix is
-added when missing, so `aerobasis` and `shared:aerobasis` are one room, not
-two that look alike.
+file cannot both win — even when they are in different repositories and only
+meet in a shared room.
 
 ## Wake signals
 
 A recipient is told that messages are waiting; it fetches the body itself.
 
 ```
-[agents-room] 2 unread in room "repo:gcs"; call msg_recv
+[agents-room] 2 unread in room "shared:storefront"; call msg_recv
 ```
 
 The body stays in the store and arrives as a tool result. That keeps the
@@ -224,12 +259,12 @@ caveats that cost time if missed (hook trust, and `cmd.exe` on Windows).
 | `agents-room path` | which database is in use |
 
 ```bash
-agents-room join --label "MAVLink dialect" --tag protocol --autonomy 1 --key "$SESSION_ID"
-agents-room join --also shared:aerobasis     # also reach agents in sibling repos
+agents-room join --label "users API" --tag backend --autonomy 1 --key "$SESSION_ID"
+agents-room join --also shared:storefront    # meet agents from the other repos
 agents-room who                              # sessions, with liveness
 agents-room cap --set 1                      # cap autonomy for the whole room
-agents-room lease claim --session $ID --path src/wire.go --ttl 600
-agents-room send --session $ID --to file:src/mavlink/** --subject "dialect" --body "..."
+agents-room lease claim --session $ID --path src/api/users.go --ttl 600
+agents-room send --session $ID --to file:src/api/users.go --subject "need a phone field"
 agents-room sent --session $ID               # what became of what you sent
 agents-room recv --session $ID
 agents-room watch                            # live view, polled

@@ -136,7 +136,7 @@ in each of them.
 Lease contention is between sessions, not between room rows. A claim checks
 every session that shares at least one room with the claimant, so two agents
 that meet only in a shared room still cannot hold one file at the same time. A trailing `/**` also matches everything below the prefix,
-so `file:src/mavlink/**` covers the whole tree.
+so `file:src/api/**` covers the whole tree.
 
 Matching uses `path.Match`, not `filepath.Match`: on Windows the latter
 treats the backslash as the separator, so `src/*.go` would match

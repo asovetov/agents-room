@@ -4,10 +4,17 @@ Read this first. It records what is decided, what is open, and where to start.
 
 ## What this project is
 
-`agents-room` is a coordination layer for AI coding agents working in the
-same codebase from different terminals and different harnesses. It provides
-project rooms, session presence, file leases, drift detection and addressing
-by file or tag, over MCP.
+`agents-room` is a coordination layer for AI coding agents that work in
+**different repositories** and have to agree with each other — an API in one
+repository, the clients that call it in others, each with its own sessions
+and often its own harness. It provides repository rooms plus shared rooms
+that cross them, session presence, file leases, drift detection and
+addressing by file or tag, over MCP.
+
+The single-repository case — several sessions on one codebase — works the
+same way and is the simpler one, but it is not the point of the project. The
+reason it exists is that agents in separate repositories cannot otherwise
+see each other at all.
 
 Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
 

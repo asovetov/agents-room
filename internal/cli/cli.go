@@ -81,7 +81,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 var Version = "dev"
 
 func usage(w io.Writer) {
-	fmt.Fprint(w, `agents-room coordinates AI coding agents working in the same codebase.
+	fmt.Fprint(w, `agents-room coordinates AI coding agents across repositories:
+sessions in different checkouts meet in a shared room to agree on a contract.
 
 Usage:
   agents-room join   [--room NAME] [--also SHARED]... [--label TEXT] [--tag T]... [--autonomy 0|1|2] [--key K]

@@ -5,17 +5,26 @@ Status section at the end.
 
 ## What it is
 
-A coordination layer for AI coding agents working on the same codebase from
-different terminals and different harnesses. It answers three questions that
-no harness answers today:
+A coordination layer for AI coding agents that work in different repositories
+and have to agree with each other. The motivating case is a contract between
+repositories: an API in one, its clients in others, each with its own agent
+sessions and often its own harness, with nobody to carry a request from one
+window to the next.
 
-1. **Who is here?** Which sessions are working on this project, on what, right now.
-2. **Who is touching this file?** Leases on paths, with expiry and stale-holder detection.
+It answers three questions that no harness answers today:
+
+1. **Who is working on this interface?** Which sessions are in the room, from
+   which repository, and which of them are still running.
+2. **Who is touching this file?** Leases on paths, with expiry and
+   stale-holder detection, across repositories rather than within one.
 3. **Is my read still valid?** Drift warnings when a file changed under you.
 
 It also delivers messages addressed by *what* rather than *who*:
-`file:src/mavlink/*` reaches whoever holds those files; `tag:protocol` reaches
-everyone working on the protocol.
+`file:src/api/users.go` reaches whoever holds that file, in whatever
+repository; `tag:mobile` reaches everyone working on the mobile client.
+
+The single-repository case, several sessions on one codebase, works the same
+way and comes for free.
 
 ## What it is not
 
@@ -107,7 +116,8 @@ The body arrives as a tool result, which keeps context small and makes
 | `tag:<tag>` | sessions whose join tags include the tag |
 
 `file:` and `tag:` are the differentiators: nobody else answers "who is
-touching `src/mavlink/`".
+touching `src/api/users.go`", and nobody answers it across repositories at
+all.
 
 ## MCP tools
 
