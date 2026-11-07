@@ -42,6 +42,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 		return runRecv(ctx, rest, stdout, stderr)
 	case "sent":
 		return runSent(ctx, rest, stdout, stderr)
+	case "history":
+		return runHistory(ctx, rest, stdout, stderr)
 	case "ack":
 		return runAck(ctx, rest, stdout, stderr)
 	case "lease":
@@ -92,6 +94,8 @@ Usage:
   agents-room send   --session ID --to SELECTOR [--subject TEXT] [--body TEXT] [--ttl SECONDS]
   agents-room recv   --session ID [--limit N] [--json]
   agents-room sent   --session ID [--limit N] [--json]
+  agents-room history [--room NAME] [--limit N] [--json]
+                                         what has been said in a room
   agents-room ack    --session ID --message ID
   agents-room lease  claim|renew|release|check|list --session ID [--path PATH] [--ttl SECONDS] [--mode exclusive|shared]
   agents-room drift  note|check --session ID --path PATH
@@ -312,7 +316,12 @@ func runSend(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return fail(stderr, err)
 	}
 	fmt.Fprintln(stdout, m.ID)
-	if m.Recipients == 0 {
+	// The warning explains why a file: selector reached nobody, which is
+	// usually a path in another repository. A bare "matched no recipient"
+	// leaves the sender with no idea what to change.
+	if m.Warning != "" {
+		fmt.Fprintf(stderr, "warning: %s\n", m.Warning)
+	} else if m.Recipients == 0 {
 		fmt.Fprintf(stderr, "warning: %s matched no recipient; the message is stored but nobody will read it\n", m.Selector)
 	}
 	return 0
@@ -500,6 +509,9 @@ func runLease(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 		}
 		fmt.Fprintf(stdout, "granted: %s until %s\n", res.Holder.Path,
 			time.Unix(res.Holder.ExpiresAt, 0).Format(time.RFC3339))
+		if res.Warning != "" {
+			fmt.Fprintf(stderr, "warning: %s\n", res.Warning)
+		}
 		return 0
 
 	case "renew":

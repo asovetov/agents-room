@@ -136,6 +136,43 @@ var migrations = []migration{
 			return nil
 		},
 	},
+	{
+		version: 6,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			// A message used to belong to exactly one room: the sender's
+			// first. That is wrong for the case the project exists for. A
+			// bot in repo:bot that also sits in shared:storefront sends a
+			// request to the api agent it meets there, and the message is
+			// filed under repo:bot, where nobody in the shared room can find
+			// it. Room history then shows the shared room as empty while work
+			// is plainly going on.
+			//
+			// A message is delivered through every room the sender shares
+			// with its recipients, so it belongs to all of them. The existing
+			// room_id column stays as the room it was filed under, which is
+			// still the sender's own; this table adds the rest.
+			stmts := []string{
+				`CREATE TABLE IF NOT EXISTS message_rooms (
+				   message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+				   room_id    TEXT NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+				   PRIMARY KEY (message_id, room_id)
+				 )`,
+				`CREATE INDEX IF NOT EXISTS idx_message_rooms_room
+				   ON message_rooms(room_id, message_id)`,
+				// Every existing message is at least in the room it was filed
+				// under, so a history query that joins this table keeps
+				// finding the messages it found before.
+				`INSERT OR IGNORE INTO message_rooms (message_id, room_id)
+				   SELECT id, room_id FROM messages`,
+			}
+			for _, s := range stmts {
+				if _, err := conn.ExecContext(ctx, s); err != nil {
+					return fmt.Errorf("migration 6: %w", err)
+				}
+			}
+			return nil
+		},
+	},
 }
 
 // migrate applies every step the database has not seen yet.

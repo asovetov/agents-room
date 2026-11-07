@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/asovetov/agents-room/internal/hub"
 )
@@ -295,5 +296,51 @@ func TestToolEventRenewsTheSessionsLeases(t *testing.T) {
 	if after.ExpiresAt <= before.ExpiresAt {
 		t.Fatalf("lease expiry did not move (%d -> %d); the tool event did not renew it",
 			before.ExpiresAt, after.ExpiresAt)
+	}
+}
+
+// A tool event proves the session is alive, so it has to move last_seen as
+// well as renew leases.
+//
+// Only the MCP middleware used to touch last_seen, and an agent editing files
+// for an hour without calling an MCP tool never reaches it. `who` then calls a
+// working chat quiet, and doctor blames the hook that is in fact running.
+func TestNudgeTouchesLastSeen(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "room.db")
+	t.Setenv("AGENTS_ROOM_DB", dbPath)
+
+	h, err := hub.OpenPath(dbPath)
+	if err != nil {
+		t.Fatalf("open hub: %v", err)
+	}
+	defer h.Close()
+
+	if _, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "k",
+	}); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	before, err := h.FindSession(ctx, "repo:x", "claude-code", "k")
+	if err != nil || before == nil {
+		t.Fatalf("find before: %v", err)
+	}
+	// last_seen has second resolution, so the touch has to land in a later
+	// second or the comparison proves nothing. Waiting is honest here: the
+	// alternative is a clock hook the hook package does not expose.
+	time.Sleep(1100 * time.Millisecond)
+
+	captureStdout(t, func() int {
+		return runWithInput("claude-code", "PostToolBatch", "repo:x", 0, hookInput{
+			SessionID: "k", Cwd: "/tmp",
+		})
+	})
+
+	after, err := h.FindSession(ctx, "repo:x", "claude-code", "k")
+	if err != nil || after == nil {
+		t.Fatalf("find after: %v", err)
+	}
+	if after.LastSeen <= before.LastSeen {
+		t.Fatalf("last_seen did not move: %d -> %d", before.LastSeen, after.LastSeen)
 	}
 }

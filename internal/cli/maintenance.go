@@ -237,6 +237,7 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		// reporting the rows it removed as "gone sessions to prune" would send
 		// the operator after sessions that no longer exist.
 		reportGoneSessions(ctx, h, stdout, line)
+		reportUnhookedSession(ctx, h, sessions, stdout, line)
 		// A lease that lapses under a session that is still working is the
 		// case the TTL is meant to prevent, and nothing else can see it
 		// coming. The hook renews on every tool event, so a warning here
@@ -388,6 +389,33 @@ func reportGoneSessions(ctx context.Context, h *hub.Hub, stdout io.Writer, line 
 	fmt.Fprintf(stdout, "     %d session(s) whose chat is no longer running: %s\n",
 		gone, strings.Join(names, ", "))
 	fmt.Fprintln(stdout, "     `agents-room prune --older-than 1` removes them once they have been quiet that long")
+}
+
+// reportUnhookedSession names a live session that has stopped reporting tool
+// events.
+//
+// A session calls Touch on every tool call, so last_seen moves while the agent
+// works. A session whose chat is alive but whose last_seen has not moved for a
+// long time is running without the hook: leases lapse under it, wake signals
+// reach nobody, and every symptom looks like a room problem rather than a
+// configuration one. This is the most common broken install and nothing else
+// in doctor can see it.
+func reportUnhookedSession(ctx context.Context, h *hub.Hub, sessions []hub.Session, stdout io.Writer, line func(bool, string, ...any)) {
+	const quiet = 2 * time.Hour
+	now := time.Now().Unix()
+	for _, s := range sessions {
+		if s.Liveness != hub.LivenessAlive {
+			continue
+		}
+		idle := now - s.LastSeen
+		if idle < int64(quiet.Seconds()) {
+			continue
+		}
+		line(false, "%s is running but has reported no tool call for %s; the hook is "+
+			"probably not configured for this harness, so its leases lapse and wake "+
+			"signals reach nobody. See docs/harness-setup.md",
+			sessionName(s), time.Duration(idle)*time.Second)
+	}
 }
 
 // sessionName is what a human calls a session: its label when it has one,

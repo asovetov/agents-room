@@ -254,6 +254,7 @@ continuations).
 | M6 Codex and Hermes adapters | both have dedicated adapters built against their source contracts; Hermes verified live, Codex verified by contract only |
 | M6.5 renew, prune, autonomy cap | done, tested |
 | M6.6 session identity | `liveness` from the harness key, `pid_started_at` against pid reuse, duplicate chats collapsed by key with their deliveries carried over; schema version 5 |
+| M6.7 room history, path warnings, watch messages, unhooked-session check | `room_history` and `agents-room history`, `message_rooms` so a shared room's history is complete, warnings for a lease or `file:` selector that names another repository, messages in `watch`, and a doctor check for a live session whose hook is not running; schema version 6 |
 | M7 release packaging | cross-builds for six targets, a tag workflow publishing checksums, and `make install` |
 
 Open items are listed in [`CONTEXT.md`](CONTEXT.md).

@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -72,6 +73,7 @@ func TestToolsAreListed(t *testing.T) {
 		"lease_claim": false, "lease_renew": false, "lease_release": false,
 		"lease_check": false, "lease_list": false,
 		"note_read": false, "drift_check": false,
+		"room_history": false,
 	}
 	for _, tool := range res.Tools {
 		if _, ok := want[tool.Name]; ok {
@@ -322,4 +324,65 @@ func TestMsgSentReportsDeliveryStates(t *testing.T) {
 	if states["read"] != float64(1) {
 		t.Fatalf("states = %v, want one read", states)
 	}
+}
+
+// A session joining a room with history gets one line saying so. Without it
+// msg_recv's silence reads as an empty room, and the agent starts from zero
+// on work that has been under way for hours.
+func TestJoinMentionsRecentHistory(t *testing.T) {
+	cs, _ := connect(t)
+	ctx := context.Background()
+
+	first := call(t, cs, "room_join", map[string]any{"room": "repo:x", "harness_key": "a"})
+	sender, _ := first["session_id"].(string)
+	call(t, cs, "msg_send", map[string]any{
+		"session_id": sender, "to": "*", "subject": "phone field needed",
+	})
+
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "room_join",
+		Arguments: map[string]any{"room": "repo:x", "harness_key": "c"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := contentText(t, res)
+	if !strings.Contains(text, "message(s) in the last day") {
+		t.Fatalf("join did not mention recent history:\n%s", text)
+	}
+	if !strings.Contains(text, "room_history") {
+		t.Fatalf("join did not point at room_history:\n%s", text)
+	}
+}
+
+// room_history returns what was said, so a newcomer can catch up.
+func TestRoomHistoryTool(t *testing.T) {
+	cs, _ := connect(t)
+	first := call(t, cs, "room_join", map[string]any{"room": "repo:x", "harness_key": "a"})
+	sender, _ := first["session_id"].(string)
+	call(t, cs, "msg_send", map[string]any{
+		"session_id": sender, "to": "*", "subject": "phone field needed", "body": "for the profile screen",
+	})
+
+	out := call(t, cs, "room_history", map[string]any{"room": "repo:x"})
+	msgs, _ := out["messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("history returned %d messages, want 1: %v", len(msgs), out)
+	}
+	m, _ := msgs[0].(map[string]any)
+	if m["subject"] != "phone field needed" {
+		t.Fatalf("subject = %v", m["subject"])
+	}
+}
+
+// contentText pulls the text out of a tool result.
+func contentText(t *testing.T, res *mcp.CallToolResult) string {
+	t.Helper()
+	var b strings.Builder
+	for _, c := range res.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			b.WriteString(tc.Text)
+		}
+	}
+	return b.String()
 }

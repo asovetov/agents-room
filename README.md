@@ -258,6 +258,11 @@ caveats that cost time if missed (hook trust, and `cmd.exe` on Windows).
 | `agents-room version` | the version you are running |
 | `agents-room path` | which database is in use |
 
+`agents-room history --room <name>` reads what has been said in a room. Use it
+after joining somewhere that work is already under way: `recv` only shows
+messages addressed to you since you joined, so it says nothing about what the
+others agreed before you got there.
+
 ```bash
 agents-room join --label "users API" --tag backend --autonomy 1 --key "$SESSION_ID"
 agents-room join --also shared:storefront    # meet agents from the other repos
@@ -266,6 +271,7 @@ agents-room cap --set 1                      # cap autonomy for the whole room
 agents-room lease claim --session $ID --path src/api/users.go --ttl 600
 agents-room send --session $ID --to file:src/api/users.go --subject "need a phone field"
 agents-room sent --session $ID               # what became of what you sent
+agents-room history --room shared:storefront # what was decided before you arrived
 agents-room recv --session $ID
 agents-room watch                            # live view, polled
 ```
@@ -274,8 +280,8 @@ The same operations are MCP tools: `room_join`, `room_leave`,
 `room_leave_room`, `room_who`, `room_set_autonomy_cap`, `msg_send`,
 `msg_recv`, `msg_ack`, `msg_unread`, `msg_sent`, `lease_claim`,
 `lease_renew`, `lease_release`, `lease_check`, `lease_list`, `note_read`,
-`drift_check`. The full reference, including selectors and delivery states,
-is in [`docs/protocol.md`](docs/protocol.md).
+`drift_check`, `room_history`. The full reference, including selectors and
+delivery states, is in [`docs/protocol.md`](docs/protocol.md).
 
 ## Knowing what is real
 

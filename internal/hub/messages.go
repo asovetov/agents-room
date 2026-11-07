@@ -39,6 +39,9 @@ type Message struct {
 	// message is stored but nobody will ever read it, which a sender needs
 	// to know before it stops paying attention.
 	Recipients int `json:"recipients"`
+	// Warning is set when the send succeeded but looks like it reached the
+	// wrong place, such as a file: selector that matched nobody.
+	Warning string `json:"warning,omitempty"`
 }
 
 // SendOptions describes a message to send.
@@ -77,6 +80,12 @@ func (h *Hub) Send(ctx context.Context, opt SendOptions) (*Message, error) {
 	if err != nil {
 		return nil, fmt.Errorf("send: %w", err)
 	}
+	// roomID is where the message is filed, and it is the sender's own room.
+	// The message also belongs to every other room the sender is in, because
+	// that is how it can reach a recipient in another repository: a bot in
+	// repo:bot writing to an api agent it meets in shared:storefront must
+	// leave the message findable in shared:storefront, or the history of that
+	// room says nothing happened while the work is plainly going on.
 	roomID := roomIDs[0]
 
 	recipients, err := h.resolve(ctx, roomIDs, opt.From, opt.To)
@@ -117,6 +126,13 @@ func (h *Hub) Send(ctx context.Context, opt SendOptions) (*Message, error) {
 			return nil, fmt.Errorf("send: insert delivery: %w", err)
 		}
 	}
+	for _, room := range roomIDs {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT OR IGNORE INTO message_rooms (message_id, room_id)
+			VALUES (?, ?)`, id, room); err != nil {
+			return nil, fmt.Errorf("send: file message in room: %w", err)
+		}
+	}
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("send: commit: %w", err)
 	}
@@ -131,7 +147,39 @@ func (h *Hub) Send(ctx context.Context, opt SendOptions) (*Message, error) {
 		ID: id, Sender: opt.From, Selector: opt.To, Subject: opt.Subject,
 		Body: opt.Body, ReplyTo: opt.ReplyTo, CreatedAt: now,
 		ExpiresAt: expires, State: StateStored, Recipients: len(recipients),
+		Warning: h.fileSelectorWarning(ctx, opt.From, opt.To, len(recipients)),
 	}, nil
+}
+
+// fileSelectorWarning explains a file: selector that reached nobody, and why
+// the usual reason is a path in another repository.
+//
+// A file: pattern is matched against each holder's leased path in three
+// forms, one of them relative to the holder's own directory. An agent that
+// writes the pattern as it sees the file in its own checkout therefore never
+// matches a holder in another repository, because the same relative string
+// names a different absolute file there. The message is stored either way --
+// a broadcast into an empty room is legitimate -- so the warning is the only
+// thing that tells the sender the request went nowhere.
+func (h *Hub) fileSelectorWarning(ctx context.Context, sessionID, selector string, recipients int) string {
+	if recipients > 0 || !strings.HasPrefix(selector, "file:") {
+		return ""
+	}
+	pattern := strings.TrimPrefix(selector, "file:")
+	var cwd string
+	if err := h.db.SQL().QueryRowContext(ctx,
+		`SELECT cwd FROM sessions WHERE id = ?`, sessionID).Scan(&cwd); err != nil {
+		cwd = ""
+	}
+	msg := fmt.Sprintf("file:%s matched no recipient", pattern)
+	if cwd != "" {
+		msg += fmt.Sprintf(": the pattern is matched against each holder's own "+
+			"checkout, so a relative path never matches a file in another "+
+			"repository. From %s that pattern means %s; to reach a holder in "+
+			"another repository, use the absolute path in the selector",
+			cwd, filepath.Join(cwd, pattern))
+	}
+	return msg
 }
 
 // resolve turns a selector into a list of session ids.
