@@ -60,7 +60,10 @@ edit and a chat that exited an hour ago are indistinguishable by it, so
 
 `prune` removes a session only when it has been quiet longer than the
 threshold **and** it is `gone`; it releases no leases for a chat that still
-exists.
+exists. It decides `gone` with the same function `room_who` uses, from the
+same scan. The two must not disagree: a chat whose MCP server was restarted
+has a working harness key and a stale pid, so a pid-based prune would delete
+a session `room_who` still shows as alive.
 
 A pid alone is not an identity. When a chat exits its number is free, and the
 next process the OS hands it to is a stranger: an "is this pid alive" check
@@ -82,6 +85,13 @@ which process the chat is running as now. Without that the pid goes stale the
 first time the MCP server is restarted under a live chat. The refresh applies
 only to the row this process owns, matched by harness key, so an operator
 touching another session cannot attach its own pid to it.
+
+Only Linux reads `/proc`, so the key scan, the start time and the pid are all
+available there and liveness is exact. On Windows and macOS those helpers
+return nothing, liveness falls back to "is the pid running", and a session
+records no pid at all when no harness process can be recognised — which is
+the safe direction: an unknown session is never pruned. On those platforms
+`prune` and `room_who` still agree, because both take the same fallback.
 
 A shared room is spelled `shared:<name>`. An extra room named without a
 prefix gets one at join time, because `--also aerobasis` and

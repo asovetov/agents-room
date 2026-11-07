@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"runtime"
 	"testing"
 	"time"
 )
@@ -444,7 +443,7 @@ func TestPruneStaleOnUnknownRoomIsHarmless(t *testing.T) {
 // other process now holds. "Is this pid alive" says yes, so prune keeps a
 // session whose chat exited long ago, and room_who shows it forever.
 func TestPruneStaleUsesStartTimeNotJustThePID(t *testing.T) {
-	if runtime.GOOS == "windows" {
+	if !hasProcFS {
 		t.Skip("start times are read from /proc on this path")
 	}
 	ctx := context.Background()
@@ -474,5 +473,52 @@ func TestPruneStaleUsesStartTimeNotJustThePID(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("pruned %d sessions, want 1: the pid is running but it is not this chat", n)
+	}
+}
+
+// prune and room_who must give the same answer about the same row.
+//
+// They did not: prune asked whether the recorded pid was running, while
+// room_who asked whether the harness key was, and a chat whose MCP server had
+// been restarted has a working key and a stale pid. On the live store that
+// meant prune deleted a session room_who still showed as alive.
+func TestPruneAgreesWithWhoAboutLiveness(t *testing.T) {
+	if !hasProcFS {
+		t.Skip("process environments are read from /proc on this path")
+	}
+	ctx := context.Background()
+	h := newHub(t)
+
+	// A live chat whose recorded pid is stale, which is what a restarted MCP
+	// server leaves behind.
+	chat := standInChat(t, "stale-pid-chat")
+	live, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "stale-pid-chat", PID: deadPID(t),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	old := h.now
+	t.Cleanup(func() { h.setClock(old) })
+	h.setClock(func() int64 { return old() + 3600 })
+
+	sessions, err := h.Who(ctx, "repo:x")
+	if err != nil {
+		t.Fatalf("who: %v", err)
+	}
+	if len(sessions) != 1 || sessions[0].Liveness != LivenessAlive {
+		t.Fatalf("who says %+v, want the chat alive: its key is held by pid %d", sessions, chat)
+	}
+
+	n, err := h.PruneStale(ctx, "repo:x", 30*time.Minute)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("prune removed %d sessions that who calls alive", n)
+	}
+	if s, _ := h.FindSession(ctx, "", "claude-code", "stale-pid-chat"); s == nil {
+		t.Fatalf("prune deleted %s, which is a working chat", live.ID)
 	}
 }
