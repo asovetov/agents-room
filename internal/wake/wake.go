@@ -36,7 +36,32 @@ type Result struct {
 // never ends. The count in the line is the full unread total, because that is
 // what the agent will find when it calls msg_recv.
 func Check(ctx context.Context, h *hub.Hub, sessionID string) (Result, error) {
-	pending, err := h.Pending(ctx, sessionID)
+	// The zero-window form is the strict one: a delivery that has been offered
+	// is not pending, so this never signals the same message twice. Callers
+	// that cannot hold a turn and want a retry use CheckRetry.
+	return check(ctx, h, sessionID, strictWindow)
+}
+
+// strictWindow is "never retry an offered delivery". PendingSince compares
+// updated_at <= now-minAge, so a window larger than any plausible age means
+// nothing qualifies.
+const strictWindow = int64(1) << 40
+
+// CheckRetry is Check with a retry window for deliveries whose earlier signal
+// went out but was never fetched.
+//
+// minAge is how long an offered delivery must have been waiting before it is
+// worth signalling again. A caller that can hold a turn must pass a window
+// longer than one turn: re-signalling inside the same turn is the loop this
+// package exists to avoid. A caller that only adds context to a tool result
+// passes 0, because it cannot extend a turn, and without the retry a message
+// offered once would never be announced again.
+func CheckRetry(ctx context.Context, h *hub.Hub, sessionID string, minAge int64) (Result, error) {
+	return check(ctx, h, sessionID, minAge)
+}
+
+func check(ctx context.Context, h *hub.Hub, sessionID string, minAge int64) (Result, error) {
+	pending, err := h.PendingSince(ctx, sessionID, minAge)
 	if err != nil {
 		return Result{}, err
 	}

@@ -185,6 +185,24 @@ otherwise would make the delivery states lie.
 the count and the latest subject, so the joining agent knows to call
 `room_history` instead of trusting `msg_recv`'s silence.
 
+### A signal is retried, but never twice inside one turn
+
+There is no `offered -> stored` transition, so a delivery that was offered
+once used to be invisible to the wake check for good. At wake level the
+socket confirms the offer as `accepted` and the turn arrives; at hold level
+the delivery stayed in `offered` and the chat was never told again. A live
+store had a session with eleven offered and zero read deliveries.
+
+`wake.Check` now takes a retry window, and the hook picks it by event:
+
+| Event | Window | Why |
+|---|---|---|
+| `Stop` | 30 minutes | Stop can hold a turn; re-signalling inside one starts another turn whose Stop blocks again |
+| tool events, `UserPromptSubmit` | 0 | they add context to a result and cannot extend a turn |
+
+Only `offered` is retried. `accepted` means the harness took the signal, so
+the turn is already coming and repeating it would start a second one.
+
 ### A path is relative to your own checkout
 
 `file:` patterns and lease paths are resolved against the caller's working

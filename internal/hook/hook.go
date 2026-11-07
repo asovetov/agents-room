@@ -188,7 +188,7 @@ func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event
 		return 0
 	}
 
-	res, err := wake.Check(ctx, h, self.ID)
+	res, err := wake.CheckRetry(ctx, h, self.ID, retryWindow(event))
 	if err != nil || res.Unread == 0 {
 		return 0
 	}
@@ -331,4 +331,24 @@ func shortID(id string) string {
 		return id[:8]
 	}
 	return id
+}
+
+// retryWindow is how long an already-offered delivery must wait before this
+// event may announce it again.
+//
+// Stop is the event that can hold a turn, so it must never re-signal inside
+// one: a Stop that blocks again starts a turn whose Stop blocks again, and the
+// chat never ends. Its window is longer than any turn the harness allows, so
+// in practice it only retries across turns.
+//
+// Every other event adds context to a tool result and cannot extend a turn,
+// so it may retry at once. Without that, a message offered once -- by a
+// PostToolBatch whose context the model did not act on -- was never announced
+// again, which is the bug that left a session with eleven offered and zero
+// read deliveries.
+func retryWindow(event string) int64 {
+	if event == "Stop" {
+		return int64((30 * time.Minute).Seconds())
+	}
+	return 0
 }

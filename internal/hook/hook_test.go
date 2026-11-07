@@ -344,3 +344,66 @@ func TestNudgeTouchesLastSeen(t *testing.T) {
 		t.Fatalf("last_seen did not move: %d -> %d", before.LastSeen, after.LastSeen)
 	}
 }
+
+// retryWindow is what keeps the fix safe: a tool event may re-announce an
+// offered message, a Stop may not, because only Stop can hold a turn.
+func TestRetryWindowIsZeroForToolEventsAndNotForStop(t *testing.T) {
+	if got := retryWindow("PostToolBatch"); got != 0 {
+		t.Fatalf("PostToolBatch window = %d, want 0: it cannot extend a turn", got)
+	}
+	if got := retryWindow("UserPromptSubmit"); got != 0 {
+		t.Fatalf("UserPromptSubmit window = %d, want 0", got)
+	}
+	if got := retryWindow("Stop"); got == 0 {
+		t.Fatal("Stop window is 0: a Stop would re-signal inside its own turn and never let the chat end")
+	}
+}
+
+// The end-to-end shape of the bug: a message is offered once, never fetched,
+// and a later tool event must announce it again.
+func TestToolEventReannouncesAnOfferedMessage(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "room.db")
+	t.Setenv("AGENTS_ROOM_DB", dbPath)
+
+	h, err := hub.OpenPath(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	self, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "k", Autonomy: hub.AutonomyNotify,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "other",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Send(ctx, hub.SendOptions{From: other.ID, To: self.ID, Body: "hi"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// First event announces it and marks it offered.
+	first := captureStdout(t, func() int {
+		return runWithInput("claude-code", "PostToolBatch", "repo:x", 0, hookInput{
+			SessionID: "k", Cwd: "/tmp",
+		})
+	})
+	if !strings.Contains(first, "unread") {
+		t.Fatalf("first tool event said nothing: %q", first)
+	}
+	// The agent did not fetch it, which is the case that used to go silent.
+	second := captureStdout(t, func() int {
+		return runWithInput("claude-code", "PostToolBatch", "repo:x", 0, hookInput{
+			SessionID: "k", Cwd: "/tmp",
+		})
+	})
+	if !strings.Contains(second, "unread") {
+		t.Fatalf("a later tool event stayed silent about a message nobody fetched: %q", second)
+	}
+}

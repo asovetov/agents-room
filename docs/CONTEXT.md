@@ -61,11 +61,15 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    A split was also how one chat came to be reported twice, so the two
    findings were often the same defect seen from two sides; collapsing the
    duplicate can make the split finding go away with it.
-6. A message belongs to every room the sender was in, through `message_rooms`
+6. A wake signal is retried on tool events but not on `Stop`. The retry is
+   what makes a message offered once still announce itself; the `Stop`
+   exemption is what keeps a blocked turn from starting another one. Any
+   change to `wake.Check` or `retryWindow` has to keep both halves.
+7. A message belongs to every room the sender was in, through `message_rooms`
    (schema version 6). That is what makes a shared room's history complete.
    It also means one message can appear in several rooms' histories, which is
    correct but worth remembering when counting traffic.
-7. Liveness is exact only on Linux, which is the only supported platform with
+8. Liveness is exact only on Linux, which is the only supported platform with
    `/proc`. On Windows and macOS the pid, start time and process environment
    are all unavailable without a platform-specific syscall, so liveness falls
    back to "is the pid running" and duplicate rows cannot be tied back to

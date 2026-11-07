@@ -621,11 +621,37 @@ func (h *Hub) Unread(ctx context.Context, sessionID string) (int, error) {
 // message: the agent is never allowed to end, which is a loop, not a
 // reminder. Once a signal has gone out, the message waits for msg_recv.
 func (h *Hub) Pending(ctx context.Context, sessionID string) (int, error) {
+	return h.PendingSince(ctx, sessionID, 0)
+}
+
+// PendingSince counts deliveries still waiting for a signal, including the
+// ones whose last signal is older than minAge seconds.
+//
+// A delivery that has been offered once used to be invisible to Pending for
+// good: there is no offered -> stored transition, so a single offer switched
+// the wake signal off for that message forever. At wake level the socket
+// confirms the offer as accepted, so it never showed; at hold level the
+// delivery stayed in `offered`, and a chat that never called msg_recv simply
+// stopped being told. On the live store one session had eleven messages in
+// `offered` and not one `read`.
+//
+// minAge is what keeps this from becoming the loop it was written to avoid.
+// A caller that can block a turn (the Stop hook) passes a window long enough
+// that it never re-signals within one turn; a caller that only adds context
+// (a tool event) can pass 0, because it cannot extend a turn.
+func (h *Hub) PendingSince(ctx context.Context, sessionID string, minAge int64) (int, error) {
+	cutoff := h.now() - minAge
 	var n int
+	// Only `offered` is retried. `accepted` means the harness took the signal
+	// -- at wake level that is the socket write returning OK -- so the turn
+	// is already coming and re-signalling it would start another one. That is
+	// exactly the loop the strict rule existed to prevent, and including
+	// `accepted` here would bring it back at wake level.
 	err := h.db.SQL().QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM deliveries
-		WHERE session_id = ? AND state = ?`,
-		sessionID, StateStored).Scan(&n)
+		WHERE session_id = ?
+		  AND (state = ? OR (state = ? AND updated_at <= ?))`,
+		sessionID, StateStored, StateOffered, cutoff).Scan(&n)
 	if err != nil {
 		return 0, fmt.Errorf("count pending: %w", err)
 	}

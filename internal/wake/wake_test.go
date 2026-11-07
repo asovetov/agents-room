@@ -219,3 +219,127 @@ func TestSocketPathReadsEnv(t *testing.T) {
 	}
 	os.Unsetenv("CLAUDE_CODE_MESSAGING_SOCKET")
 }
+
+// A delivery offered once must still be announced again by an event that
+// cannot hold a turn.
+//
+// There is no offered -> stored transition, so a single offer used to switch
+// the wake signal off for that message for good. On the live store one session
+// had eleven offered deliveries and not one read: the hook ran, built the
+// line, and never spoke again about that message.
+func TestCheckRetryReannouncesAnOfferedDelivery(t *testing.T) {
+	ctx := context.Background()
+	h, err := hub.OpenPath(filepath.Join(t.TempDir(), "room.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	a, err := h.Join(ctx, hub.JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := h.Join(ctx, hub.JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Send(ctx, hub.SendOptions{From: a.ID, To: b.ID, Subject: "s", Body: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.MarkOffered(ctx, b.ID, hub.StateOffered); err != nil {
+		t.Fatal(err)
+	}
+
+	// The strict form stays silent: that is what keeps Stop from looping.
+	strict, err := Check(ctx, h, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strict.Line != "" {
+		t.Fatalf("Check re-signalled an offered delivery: %+v", strict)
+	}
+
+	// A tool event may retry at once, because it cannot extend a turn.
+	retry, err := CheckRetry(ctx, h, b.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retry.Line == "" {
+		t.Fatal("CheckRetry stayed silent about a message nobody had fetched")
+	}
+	if retry.Unread != 1 {
+		t.Fatalf("unread = %d, want 1", retry.Unread)
+	}
+}
+
+// A Stop may retry only across turns, never inside one.
+func TestCheckRetryHonoursTheWindow(t *testing.T) {
+	ctx := context.Background()
+	h, err := hub.OpenPath(filepath.Join(t.TempDir(), "room.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	a, err := h.Join(ctx, hub.JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := h.Join(ctx, hub.JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Send(ctx, hub.SendOptions{From: a.ID, To: b.ID, Subject: "s", Body: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.MarkOffered(ctx, b.ID, hub.StateOffered); err != nil {
+		t.Fatal(err)
+	}
+
+	// Inside the window: silent.
+	res, err := CheckRetry(ctx, h, b.ID, 1800)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Line != "" {
+		t.Fatalf("retried inside the window: %+v", res)
+	}
+}
+
+// A signal the harness accepted must not be sent again.
+//
+// `accepted` means the socket write returned OK, so at wake level a turn is
+// already on its way. Re-announcing it would start another turn, and a turn
+// whose event announces again never ends -- the loop the strict rule exists
+// to prevent. Only `offered`, where the signal may not have landed, retries.
+func TestCheckRetryNeverRepeatsAnAcceptedDelivery(t *testing.T) {
+	ctx := context.Background()
+	h, err := hub.OpenPath(filepath.Join(t.TempDir(), "room.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	a, err := h.Join(ctx, hub.JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := h.Join(ctx, hub.JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "b"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Send(ctx, hub.SendOptions{From: a.ID, To: b.ID, Subject: "s", Body: "b"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.MarkOffered(ctx, b.ID, hub.StateAccepted); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := CheckRetry(ctx, h, b.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Line != "" {
+		t.Fatalf("re-signalled an accepted delivery: %+v", res)
+	}
+}
