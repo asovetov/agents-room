@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -815,5 +816,182 @@ func TestPlanDuplicateFixKeepsTheOldestWithoutKeys(t *testing.T) {
 	}
 	if len(plan) != 1 || plan[0].Keep != first.ID {
 		t.Fatalf("plan = %+v, want to keep the older %q", plan, first.ID)
+	}
+}
+
+// Two rows for one chat do not always share a pid.
+//
+// The row minted by room_join records the pid of the MCP server that answered
+// it, and that process exits with the chat. The row the hook made carries the
+// harness key and records the chat's own pid. Grouping by pid never sees the
+// pair, so the chat is counted twice in every room it is in and doctor says
+// nothing.
+//
+// The ghost has no key of its own, so what ties it back is the key of the
+// process it names: while that process lived it carried the chat's session id
+// in its environment. The test process stands in for it.
+func TestDuplicatePIDsFindsRowsThatShareAHarnessKey(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("process environments are read from /proc on this path")
+	}
+	ctx := context.Background()
+	h := newHub(t)
+
+	live, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "chat", PID: 4242,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The ghost: same chat, no key, and the pid of the process that answered
+	// the join.
+	if _, err := h.db.SQL().ExecContext(ctx, `
+		INSERT INTO sessions (id, room_id, harness, cwd, pid, pid_started_at, label,
+		                      tags, autonomy, joined_at, last_seen, harness_key)
+		SELECT 'ghost', room_id, harness, cwd, ?, 0, label, tags, autonomy,
+		       joined_at + 60, joined_at + 60, '' FROM sessions WHERE id = ?`,
+		standInChat(t, "chat"), live.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SQL().ExecContext(ctx, `
+		INSERT INTO session_rooms (session_id, room_id, joined_at)
+		SELECT 'ghost', room_id, joined_at FROM session_rooms WHERE session_id = ?`,
+		live.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	dups := h.DuplicatePIDs(ctx)
+	if len(dups) != 1 {
+		t.Fatalf("found %d duplicates, want 1: the two rows are one chat", len(dups))
+	}
+	if dups[0].Kind != "harness_key" {
+		t.Fatalf("grouped by %q, want harness_key", dups[0].Kind)
+	}
+	if len(dups[0].IDs) != 2 {
+		t.Fatalf("group has %d ids, want 2: %v", len(dups[0].IDs), dups[0].IDs)
+	}
+}
+
+// When the rows are collapsed, the messages the doomed row still holds have to
+// reach the session that survives. The row was a real member of the room: a
+// delivery deleted with it is a message nobody ever read.
+func TestApplyDuplicateFixMovesDeliveriesToTheKeptSession(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	if runtime.GOOS == "windows" {
+		t.Skip("process environments are read from /proc on this path")
+	}
+	sender := join(t, h, "repo:x", "sender")
+	keep, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "chat", PID: 4242,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SQL().ExecContext(ctx, `
+		INSERT INTO sessions (id, room_id, harness, cwd, pid, pid_started_at, label,
+		                      tags, autonomy, joined_at, last_seen, harness_key)
+		SELECT 'ghost', room_id, harness, cwd, ?, 0, label, tags, autonomy,
+		       joined_at, joined_at, '' FROM sessions WHERE id = ?`,
+		standInChat(t, "chat"), keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SQL().ExecContext(ctx, `
+		INSERT INTO session_rooms (session_id, room_id, joined_at)
+		SELECT 'ghost', room_id, joined_at FROM session_rooms WHERE session_id = ?`, keep.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// One message that reaches both rows, one that only the ghost got. The
+	// second is the delivery a plain delete would throw away.
+	if _, err := h.Send(ctx, SendOptions{From: sender.ID, To: "*", Subject: "both", Body: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Send(ctx, SendOptions{From: sender.ID, To: "ghost", Subject: "ghost only", Body: "y"}); err != nil {
+		t.Fatal(err)
+	}
+	// A direct send to the ghost does not reach the kept row, which is the
+	// delivery that would be lost by a plain delete.
+	if n, _ := h.Unread(ctx, keep.ID); n != 1 {
+		t.Fatalf("kept row unread = %d before the fix, want 1", n)
+	}
+
+	plan, err := h.PlanDuplicateFix(ctx)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if len(plan) != 1 {
+		t.Fatalf("plan has %d fixes, want 1", len(plan))
+	}
+	if _, err := h.ApplyDuplicateFix(ctx, plan); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	got, err := h.Recv(ctx, keep.ID, 0)
+	if err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	subjects := map[string]bool{}
+	for _, m := range got {
+		subjects[m.Subject] = true
+	}
+	if !subjects["both"] || !subjects["ghost only"] {
+		t.Fatalf("kept session received %v, want both messages", subjects)
+	}
+	var orphans int
+	if err := h.db.SQL().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM deliveries WHERE session_id = 'ghost'`).Scan(&orphans); err != nil {
+		t.Fatal(err)
+	}
+	if orphans != 0 {
+		t.Fatalf("ghost row still holds %d deliveries", orphans)
+	}
+}
+
+// A recipient that leaves with the message unread is not a recipient that is
+// still waiting. Its delivery is gone, so counting only the rows on disk says
+// "nobody read it yet" about a session that no longer exists.
+func TestSentReportsRecipientsThatLeft(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	sender := join(t, h, "repo:x", "sender")
+	stay := join(t, h, "repo:x", "stay")
+	leave := join(t, h, "repo:x", "leave")
+
+	msg, err := h.Send(ctx, SendOptions{From: sender.ID, To: "*", Subject: "hi", Body: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Recipients != 2 {
+		t.Fatalf("recipients = %d, want 2", msg.Recipients)
+	}
+	if _, err := h.Recv(ctx, stay.ID, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.Leave(ctx, leave.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	sent, err := h.SentMessages(ctx, sender.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sent) != 1 {
+		t.Fatalf("sent has %d messages, want 1", len(sent))
+	}
+	got := sent[0]
+	if got.Sent != 2 {
+		t.Fatalf("sent to %d recipients, want the 2 recorded at send time", got.Sent)
+	}
+	if got.Left != 1 {
+		t.Fatalf("left = %d, want 1: one recipient walked out without reading", got.Left)
+	}
+	if got.Pending != 0 {
+		t.Fatalf("pending = %d, want 0: nobody is still being waited on", got.Pending)
+	}
+	if got.Recipients != 1 {
+		t.Fatalf("recipients = %d, want 1 delivery left on disk", got.Recipients)
 	}
 }

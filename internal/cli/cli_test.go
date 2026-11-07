@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -472,5 +473,83 @@ func TestDoctorFixRemovesDuplicateSessions(t *testing.T) {
 	}
 	if !strings.Contains(who, keep) {
 		t.Fatalf("--fix removed the session it should keep:\n%s", who)
+	}
+}
+
+// who has to say whether the chat behind a session is still running.
+//
+// last_seen cannot answer that: a chat thinking through a long edit and a
+// chat that exited look identical in "seen 40m ago". The difference decides
+// whether a file it holds is really held.
+func TestWhoShowsLiveness(t *testing.T) {
+	run := setup(t)
+	// A pid that is this test process: alive, and its start time is recorded.
+	t.Setenv("AGENTS_ROOM_PID", strconv.Itoa(os.Getpid()))
+	_, out, _ := run("join", "--room", "repo:x", "--key", "alive")
+	id := strings.TrimSpace(out)
+
+	code, who, errOut := run("who", "--room", "repo:x")
+	if code != 0 {
+		t.Fatalf("who exit %d: %s", code, errOut)
+	}
+	if !strings.Contains(who, "STATE") {
+		t.Fatalf("who has no liveness column:\n%s", who)
+	}
+	line := ""
+	for _, l := range strings.Split(who, "\n") {
+		if strings.HasPrefix(l, id) {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("who did not list %s:\n%s", id, who)
+	}
+	if !strings.Contains(line, hub.LivenessAlive) {
+		t.Fatalf("a running session is not shown as alive:\n%s", line)
+	}
+}
+
+// A session whose chat exited is gone even though the row is recent. The old
+// table said nothing at all, which read as "present".
+func TestWhoShowsGoneSession(t *testing.T) {
+	run := setup(t)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	_, out, _ := run("join", "--room", "repo:x", "--key", "gone")
+	id := strings.TrimSpace(out)
+
+	// 4242 is not running, and the row records no start time, so the pid
+	// alone decides: gone.
+	db, err := store.Open(os.Getenv("AGENTS_ROOM_DB"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.SQL().ExecContext(context.Background(),
+		`UPDATE sessions SET pid_started_at = 0 WHERE id = ?`, id); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+
+	_, who, _ := run("who", "--room", "repo:x")
+	for _, l := range strings.Split(who, "\n") {
+		if strings.HasPrefix(l, id) && !strings.Contains(l, hub.LivenessGone) {
+			t.Fatalf("a session whose process is gone is not shown as gone:\n%s", l)
+		}
+	}
+}
+
+// doctor has to name the rows nobody will ever come back to, and name the
+// command that sweeps them. Nothing else in doctor can see them: every other
+// check reads the store, and the store cannot tell dead from thinking.
+func TestDoctorReportsGoneSessions(t *testing.T) {
+	run := setup(t)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	run("join", "--room", hub.RepoRoom(""), "--key", "gone")
+
+	_, out, _ := run("doctor")
+	if !strings.Contains(out, "whose chat is no longer running") {
+		t.Fatalf("doctor did not report the gone session:\n%s", out)
+	}
+	if !strings.Contains(out, "prune") {
+		t.Fatalf("doctor named the problem without naming the repair:\n%s", out)
 	}
 }

@@ -74,10 +74,89 @@ type Session struct {
 	Autonomy int      `json:"autonomy"`
 	JoinedAt int64    `json:"joined_at"`
 	LastSeen int64    `json:"last_seen"`
+	// Liveness reports whether the chat behind this session is still running:
+	// LivenessAlive, LivenessGone, or LivenessUnknown when the row records no
+	// pid at all.
+	//
+	// It is an answer about the process, not about activity. A chat that has
+	// been quiet for an hour is alive; a row whose chat exited is gone,
+	// however recently it was seen. That distinction is the whole point:
+	// last_seen alone cannot tell a thinking agent from a dead one.
+	Liveness string `json:"liveness"`
+	// PIDStartedAt is the start time of PID, recorded when the pid was
+	// stored. Together they name one process, so a pid the OS later reuses
+	// is not mistaken for the chat that used to hold it. Zero means the
+	// platform could not report it.
+	PIDStartedAt int64 `json:"pid_started_at,omitempty"`
 	// Warning is set when the join succeeded but looks like a mistake the
 	// caller can still correct. It is not an error: a join that is right for
 	// an unusual setup must still work.
 	Warning string `json:"warning,omitempty"`
+}
+
+// Liveness is what a session row can honestly say about its chat.
+const (
+	// LivenessAlive means the recorded process is still running.
+	LivenessAlive = "alive"
+	// LivenessGone means it exited. The row is a leftover.
+	LivenessGone = "gone"
+	// LivenessUnknown means no pid was recorded, so nobody can tell. It is
+	// not the same as gone and is never treated as one.
+	LivenessUnknown = "unknown"
+)
+
+// livenessOf decides a session's liveness from its recorded pid.
+//
+// A pid that is not running is gone. A pid that is running is only the same
+// process if its start time matches the one recorded with it; when the start
+// time was never recorded (a row from an older binary, or a platform that
+// cannot report it) the pid alone has to do, which is the pre-existing
+// behaviour. A zero pid means the join could not find a harness process and
+// recorded nothing, and guessing from that would delete live sessions.
+func livenessOf(pid int, startedAt int64) string {
+	if pid <= 0 {
+		return LivenessUnknown
+	}
+	if !processAlive(pid) {
+		return LivenessGone
+	}
+	if startedAt > 0 {
+		if current := processStartTime(pid); current > 0 && current != startedAt {
+			// Something holds the number, but it is not the process the row
+			// was written for.
+			return LivenessGone
+		}
+	}
+	return LivenessAlive
+}
+
+// sessionLiveness decides liveness from the harness key when the platform can
+// report which keys are running, and from the pid otherwise.
+//
+// The key is the better answer. A chat keeps its key across MCP restarts,
+// while the pid the row recorded changes with each one; a row whose pid is
+// stale is therefore still a live chat, and calling it gone would send an
+// operator to prune a session that is working.
+func sessionLiveness(harnessKey string, pid int, startedAt int64,
+	liveKeys map[string]bool, keysKnown bool) string {
+	if keysKnown && harnessKey != "" {
+		if liveKeys[harnessKey] {
+			return LivenessAlive
+		}
+		// The key is not in any readable environment. That is evidence the
+		// chat is gone, but not proof: a process this user cannot read would
+		// be invisible to the scan too. The recorded process agreeing that it
+		// is gone is what makes it conclusive; when the pid still looks
+		// alive, the two tests disagree and neither is trusted alone.
+		if livenessOf(pid, startedAt) == LivenessGone {
+			return LivenessGone
+		}
+		if pid > 0 {
+			return LivenessAlive
+		}
+		return LivenessUnknown
+	}
+	return livenessOf(pid, startedAt)
 }
 
 // Autonomy levels. The effective level is the minimum of what the agent
@@ -140,6 +219,11 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 	if opt.PID == 0 {
 		opt.PID = HarnessPIDFromEnv()
 	}
+	// Record the pid together with the moment the process started. A pid on
+	// its own stops naming a chat as soon as the chat exits and the number is
+	// reused, and both room_who and prune would then answer about whatever
+	// process inherited it.
+	pidStartedAt := processStartTime(opt.PID)
 	if opt.Autonomy < AutonomyNotify {
 		return nil, fmt.Errorf("autonomy must be 0, 1 or 2, got %d", opt.Autonomy)
 	}
@@ -195,9 +279,9 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 			sessionID = existing.ID
 			if _, err := h.db.SQL().ExecContext(ctx, `
 				UPDATE sessions
-				SET cwd = ?, pid = ?, label = ?, tags = ?, autonomy = ?, last_seen = ?
+				SET cwd = ?, pid = ?, pid_started_at = ?, label = ?, tags = ?, autonomy = ?, last_seen = ?
 				WHERE id = ?`,
-				opt.Cwd, opt.PID, opt.Label, string(tags), effective, now, sessionID); err != nil {
+				opt.Cwd, opt.PID, pidStartedAt, opt.Label, string(tags), effective, now, sessionID); err != nil {
 				return nil, fmt.Errorf("update session: %w", err)
 			}
 		}
@@ -212,10 +296,11 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 		// room for a downgrade; memberships live in session_rooms.
 		_, err = h.db.SQL().ExecContext(ctx, `
 			INSERT INTO sessions
-				(id, room_id, harness, cwd, pid, label, tags, autonomy, joined_at, last_seen, harness_key)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			sessionID, roomIDs[0], opt.Harness, opt.Cwd, opt.PID, opt.Label,
-			string(tags), effective, now, now, opt.HarnessKey)
+				(id, room_id, harness, cwd, pid, pid_started_at, label, tags,
+				 autonomy, joined_at, last_seen, harness_key)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			sessionID, roomIDs[0], opt.Harness, opt.Cwd, opt.PID, pidStartedAt,
+			opt.Label, string(tags), effective, now, now, opt.HarnessKey)
 		if err != nil {
 			return nil, fmt.Errorf("insert session: %w", err)
 		}
@@ -246,9 +331,11 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 
 	return &Session{
 		ID: sessionID, Rooms: rooms, Harness: opt.Harness, Cwd: opt.Cwd,
-		PID: opt.PID, Label: opt.Label, Tags: opt.Tags, Autonomy: effective,
+		PID: opt.PID, PIDStartedAt: pidStartedAt, Label: opt.Label,
+		Tags: opt.Tags, Autonomy: effective,
 		JoinedAt: now, LastSeen: now,
-		Warning: harnessKeyWarning(opt.HarnessKey),
+		Liveness: livenessOf(opt.PID, pidStartedAt),
+		Warning:  harnessKeyWarning(opt.HarnessKey),
 	}, nil
 }
 
@@ -285,6 +372,11 @@ func (h *Hub) Leave(ctx context.Context, sessionID string) error {
 	// deliveries.session_id has no foreign key, so the session's rows do not
 	// cascade. Left behind they are counted by Unread and Pending forever,
 	// and no one can read them: the session that would fetch them is gone.
+	//
+	// What the deletion must not do is make the sender's history lie. The
+	// count recorded in the send event survives, so `sent` can tell "nobody
+	// read it" from "the recipient left before reading it" without keeping a
+	// row for a session that no longer exists.
 	if _, err := h.db.SQL().ExecContext(ctx,
 		`DELETE FROM deliveries WHERE session_id = ?`, sessionID); err != nil {
 		return fmt.Errorf("drop deliveries: %w", err)
@@ -342,8 +434,8 @@ func (h *Hub) Who(ctx context.Context, room string) ([]Session, error) {
 	}
 
 	rows, err := h.db.SQL().QueryContext(ctx, `
-		SELECT s.id, s.harness, s.cwd, s.pid, s.label, s.tags, s.autonomy,
-		       s.joined_at, s.last_seen
+		SELECT s.id, s.harness, s.cwd, s.pid, s.pid_started_at, s.harness_key,
+		       s.label, s.tags, s.autonomy, s.joined_at, s.last_seen
 		FROM sessions s
 		JOIN session_rooms sr ON sr.session_id = s.id
 		WHERE sr.room_id = ?
@@ -353,18 +445,24 @@ func (h *Hub) Who(ctx context.Context, room string) ([]Session, error) {
 	}
 	defer rows.Close()
 
+	// One /proc scan answers for every session below. The harness key is the
+	// better test than the pid: the MCP server is restarted under a live chat
+	// and every restart changes the recorded pid, while the key does not.
+	liveKeys, keysKnown := liveHarnessKeys()
+
 	out := []Session{}
 	for rows.Next() {
 		s := Session{Rooms: []string{room}}
-		var tags string
-		if err := rows.Scan(&s.ID, &s.Harness, &s.Cwd, &s.PID, &s.Label,
-			&tags, &s.Autonomy, &s.JoinedAt, &s.LastSeen); err != nil {
+		var tags, harnessKey string
+		if err := rows.Scan(&s.ID, &s.Harness, &s.Cwd, &s.PID, &s.PIDStartedAt,
+			&harnessKey, &s.Label, &tags, &s.Autonomy, &s.JoinedAt, &s.LastSeen); err != nil {
 			return nil, fmt.Errorf("scan session: %w", err)
 		}
 		s.Tags = []string{}
 		if err := json.Unmarshal([]byte(tags), &s.Tags); err != nil {
 			s.Tags = []string{}
 		}
+		s.Liveness = sessionLiveness(harnessKey, s.PID, s.PIDStartedAt, liveKeys, keysKnown)
 		out = append(out, s)
 	}
 	if err := rows.Err(); err != nil {
@@ -452,6 +550,11 @@ func (h *Hub) sessionRoomIDs(ctx context.Context, sessionID string) ([]string, e
 // moves on tool calls and on a wake nudge, so an agent that is thinking, or
 // sitting in a long edit, is quiet while very much alive; pruning it would
 // delete the row and release the leases on files it is still writing.
+//
+// "Gone" is LivenessGone, not "the pid is not running". A pid is a number the
+// OS reuses, and a session whose recorded process has exited can still find
+// something else running at that number; the start time recorded with the pid
+// is what keeps that from reading as a live chat.
 func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration) (int, error) {
 	roomID, err := h.roomID(ctx, room)
 	if errors.Is(err, store.ErrNotFound) {
@@ -466,7 +569,7 @@ func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration)
 	// Filtering on room_id would make `prune --room shared:storefront` see
 	// nobody: a session's primary room is the one it joined first.
 	rows, err := h.db.SQL().QueryContext(ctx, `
-		SELECT s.id, s.pid FROM sessions s
+		SELECT s.id, s.pid, s.pid_started_at FROM sessions s
 		JOIN session_rooms sr ON sr.session_id = s.id
 		WHERE sr.room_id = ? AND s.last_seen < ?`, roomID, cutoff)
 	if err != nil {
@@ -476,12 +579,15 @@ func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration)
 	for rows.Next() {
 		var id string
 		var pid int
-		if err := rows.Scan(&id, &pid); err != nil {
+		var startedAt int64
+		if err := rows.Scan(&id, &pid, &startedAt); err != nil {
 			rows.Close()
 			return 0, fmt.Errorf("prune: scan: %w", err)
 		}
 		// Quiet but running is not stale: the agent is thinking or editing.
-		if processAlive(pid) {
+		// A row with no pid at all is never pruned either -- that is an
+		// unknown, and deleting on a guess would take a live chat's leases.
+		if livenessOf(pid, startedAt) != LivenessGone {
 			continue
 		}
 		ids = append(ids, id)
@@ -517,9 +623,36 @@ func (h *Hub) PruneStale(ctx context.Context, room string, maxAge time.Duration)
 
 // Touch updates a session's last_seen so the room shows it as alive.
 func (h *Hub) Touch(ctx context.Context, sessionID string) error {
-	_, err := h.db.SQL().ExecContext(ctx,
-		`UPDATE sessions SET last_seen = ? WHERE id = ?`, h.now(), sessionID)
-	if err != nil {
+	now := h.now()
+	// A tool call is also proof of which process the chat is running as now,
+	// so the pid is refreshed along with last_seen -- but only on the row
+	// this process can prove it owns. A caller may touch a session that is
+	// not its own (an operator naming another session), and writing this
+	// process's pid there would attach a stranger to it. The condition is in
+	// the SQL rather than in Go so that last_seen is updated in every case:
+	// the CASE falls through to the recorded pid when the keys do not match.
+	//
+	// Without the refresh the pid goes stale the first time the MCP server is
+	// restarted under a live chat. last_seen keeps moving while the recorded
+	// number points at a process that exited, and every liveness check then
+	// calls a working chat gone.
+	key := HarnessKeyFromEnv()
+	pid := 0
+	startedAt := int64(0)
+	if key != "" {
+		if pid = HarnessPIDFromEnv(); pid > 0 {
+			startedAt = processStartTime(pid)
+		}
+	}
+	if _, err := h.db.SQL().ExecContext(ctx, `
+		UPDATE sessions SET
+			last_seen = ?,
+			pid_started_at = CASE WHEN ? > 0 AND harness_key = ? AND harness_key <> ''
+			                      THEN ? ELSE pid_started_at END,
+			pid = CASE WHEN ? > 0 AND harness_key = ? AND harness_key <> ''
+			           THEN ? ELSE pid END
+		WHERE id = ?`,
+		now, pid, key, startedAt, pid, key, pid, sessionID); err != nil {
 		return fmt.Errorf("touch session: %w", err)
 	}
 	return nil
@@ -774,60 +907,158 @@ func (h *Hub) RoomNames(ctx context.Context) []string {
 	return out
 }
 
-// DuplicatePID is one process registered as more than one session.
+// DuplicatePID is one chat registered as more than one session.
 type DuplicatePID struct {
-	PID  int
-	IDs  []string
-	Room string // the repository room the first of them is in
+	// Identity is what ties the rows together: the harness key they share,
+	// or the pid they share when neither carries a key.
+	Identity string
+	// Kind is "harness_key" or "pid".
+	Kind string
+	// PID is the process the rows name, when they name one.
+	PID int
+	IDs []string
 }
 
-// DuplicatePIDs finds one process holding several session rows.
+// DuplicatePIDs finds one chat holding several session rows.
 //
 // A harness runs one chat per process, so two rows for one pid are the same
-// chat counted twice. It happened when room_join minted a session without
-// the harness key, beside the one the SessionStart hook had already made;
-// room_who then reported more agents than exist.
+// chat counted twice; that is how room_join minted a session without the
+// harness key, beside the one the SessionStart hook had already made.
+//
+// Grouping by pid alone misses the other half of the same bug. A row created
+// by room_join records the pid of the MCP server that answered it, and that
+// process exits when the chat does; the row keeps the dead number while the
+// hook's row, which does carry the key, records the chat's own pid. The two
+// rows are then one chat with two pids, and a pid grouping never sees them
+// together. A harness key is therefore tried first: two rows with the same
+// key are the same chat whatever their pids say.
 func (h *Hub) DuplicatePIDs(ctx context.Context) []DuplicatePID {
-	rows, err := h.db.SQL().QueryContext(ctx, `
+	var out []DuplicatePID
+
+	// Identity is the harness key a row carries, or the key of the process it
+	// names when it carries none. The second half is what ties a ghost row --
+	// minted by room_join, with no key and a pid that died with the MCP server
+	// -- to the keyed row of the same chat: the dead pid's process, while it
+	// lived, had the chat's own session id in its environment.
+	type identified struct {
+		id       string
+		identity string
+	}
+	var rows_ []identified
+	rows, err := h.db.SQL().QueryContext(ctx,
+		`SELECT id, harness_key, pid FROM sessions ORDER BY joined_at`)
+	if err != nil {
+		return nil
+	}
+	for rows.Next() {
+		var r identified
+		var pid int
+		if rows.Scan(&r.id, &r.identity, &pid) != nil {
+			continue
+		}
+		if r.identity == "" {
+			r.identity = harnessKeyOfProcess(pid)
+		}
+		rows_ = append(rows_, r)
+	}
+	rows.Close()
+
+	byIdentity := map[string][]string{}
+	order := []string{}
+	for _, r := range rows_ {
+		if r.identity == "" {
+			continue
+		}
+		if _, ok := byIdentity[r.identity]; !ok {
+			order = append(order, r.identity)
+		}
+		byIdentity[r.identity] = append(byIdentity[r.identity], r.id)
+	}
+	for _, identity := range order {
+		if ids := byIdentity[identity]; len(ids) > 1 {
+			out = append(out, DuplicatePID{
+				Identity: identity, Kind: "harness_key", IDs: ids,
+			})
+		}
+	}
+
+	// Rows already accounted for by a key are not reported a second time.
+	seen := map[string]bool{}
+	for _, d := range out {
+		for _, id := range d.IDs {
+			seen[id] = true
+		}
+	}
+
+	rows, err = h.db.SQL().QueryContext(ctx, `
 		SELECT pid, GROUP_CONCAT(id) FROM sessions
 		WHERE pid > 0
 		GROUP BY pid HAVING COUNT(*) > 1
 		ORDER BY pid`)
 	if err != nil {
-		return nil
+		return out
 	}
 	defer rows.Close()
-
-	var out []DuplicatePID
 	for rows.Next() {
 		var d DuplicatePID
 		var ids string
 		if rows.Scan(&d.PID, &ids) != nil {
 			continue
 		}
-		d.IDs = strings.Split(ids, ",")
+		var fresh []string
+		for _, id := range strings.Split(ids, ",") {
+			if !seen[id] {
+				fresh = append(fresh, id)
+			}
+		}
+		if len(fresh) < 2 {
+			continue
+		}
+		d.Kind = "pid"
+		d.Identity = strconv.Itoa(d.PID)
+		d.IDs = fresh
 		out = append(out, d)
 	}
 	return out
 }
 
-// DuplicateFix is the session ids doctor would remove to collapse a chat that
-// registered more than once, and the id it keeps.
+// DuplicateFix is what doctor would do to collapse a chat that registered
+// more than once: the id it keeps, the ids it removes, and what it does with
+// the messages the removed rows were still holding.
 type DuplicateFix struct {
-	PID     int      `json:"pid"`
-	Keep    string   `json:"keep"`
-	Remove  []string `json:"remove"`
-	Because string   `json:"because"`
+	Identity string   `json:"identity"`
+	Kind     string   `json:"kind"`
+	PID      int      `json:"pid,omitempty"`
+	Keep     string   `json:"keep"`
+	Remove   []string `json:"remove"`
+	// Moved counts deliveries carried over to the kept session. A row that
+	// still had unread messages has them for a reason: it was a real member
+	// of the room, and dropping them would discard a message nobody read.
+	Moved int `json:"moved,omitempty"`
+	// Because explains the choice in one line, for an operator reading it.
+	Because string `json:"because"`
 }
 
-// PlanDuplicateFix decides, for every pid that holds several sessions, which
-// one to keep.
+// PlanDuplicateFix decides, for every chat registered more than once, which
+// row to keep and what to do with the rest.
 //
-// The rule is the one a person would apply by hand. A session with a harness
-// key is the one the harness keeps rejoining, so it survives; among sessions
-// without one, or with several, the oldest survives, because that is the one
-// that has been in the room longest and whose id other agents already have.
-// Nothing is removed here: the caller decides whether to apply it.
+// The rule is the one a person would apply by hand, in order:
+//
+//  1. a row with a harness key survives. The key is the durable identity:
+//     the harness rejoins through it, and a rejoin updates that row's pid and
+//     start time. The other row can never heal itself -- nothing will ever
+//     write to it again -- so keeping it means the next SessionStart mints a
+//     fresh keyed row and the duplicate is back;
+//  2. between two rows with no key, the one that is alive survives, because
+//     it is the row whose process still exists;
+//  3. the oldest survives, because other agents already have its id.
+//
+// Liveness deliberately ranks below the key. It is tempting to keep the row
+// that looks alive, and it is wrong: the pid on a keyless row is the MCP
+// server that answered the join, which is alive for as long as the chat is
+// and says nothing about which row the chat will come back as.
+//
+// Nothing is changed here: the caller decides whether to apply it.
 func (h *Hub) PlanDuplicateFix(ctx context.Context) ([]DuplicateFix, error) {
 	dups := h.DuplicatePIDs(ctx)
 	out := make([]DuplicateFix, 0, len(dups))
@@ -836,47 +1067,89 @@ func (h *Hub) PlanDuplicateFix(ctx context.Context) ([]DuplicateFix, error) {
 			id         string
 			harnessKey string
 			joinedAt   int64
+			liveness   string
+			deliveries int
 		}
 		var cands []candidate
 		for _, id := range d.IDs {
 			var c candidate
+			var pid int
+			var startedAt int64
 			if err := h.db.SQL().QueryRowContext(ctx,
-				`SELECT id, harness_key, joined_at FROM sessions WHERE id = ?`, id).
-				Scan(&c.id, &c.harnessKey, &c.joinedAt); err != nil {
+				`SELECT id, harness_key, joined_at, pid, pid_started_at FROM sessions WHERE id = ?`, id).
+				Scan(&c.id, &c.harnessKey, &c.joinedAt, &pid, &startedAt); err != nil {
 				continue
 			}
+			c.liveness = livenessOf(pid, startedAt)
+			_ = h.db.SQL().QueryRowContext(ctx,
+				`SELECT COUNT(*) FROM deliveries WHERE session_id = ?`, id).Scan(&c.deliveries)
 			cands = append(cands, c)
 		}
 		if len(cands) < 2 {
 			continue
 		}
 
+		rank := func(c candidate) int {
+			score := 0
+			if c.harnessKey != "" {
+				score += 2
+			}
+			if c.liveness == LivenessAlive {
+				score++
+			}
+			return score
+		}
 		keep := cands[0]
-		because := "it joined first"
 		for _, c := range cands {
-			if c.harnessKey != "" && keep.harnessKey == "" {
-				keep, because = c, "it carries the harness key the chat rejoins with"
-			} else if c.harnessKey == "" && keep.harnessKey == "" && c.joinedAt < keep.joinedAt {
+			// A higher score wins; at equal score the older row wins, so the
+			// comparison never depends on the order the ids came back in.
+			ks, cs := rank(keep), rank(c)
+			if cs > ks || (cs == ks && c.joinedAt < keep.joinedAt) {
 				keep = c
 			}
 		}
 
-		fix := DuplicateFix{PID: d.PID, Keep: keep.id, Because: because}
+		because := "it joined first"
+		switch {
+		case keep.harnessKey != "" && keep.liveness == LivenessAlive:
+			because = "it carries the harness key the chat rejoins with, and it is running"
+		case keep.harnessKey != "":
+			because = "it carries the harness key the chat rejoins with; the other row would never be updated again"
+		case keep.liveness == LivenessAlive:
+			because = "it is the row whose chat is still running"
+		}
+
+		fix := DuplicateFix{
+			Identity: d.Identity, Kind: d.Kind, PID: d.PID,
+			Keep: keep.id, Because: because,
+		}
 		for _, c := range cands {
-			if c.id != keep.id {
-				fix.Remove = append(fix.Remove, c.id)
+			if c.id == keep.id {
+				continue
 			}
+			fix.Remove = append(fix.Remove, c.id)
+			fix.Moved += c.deliveries
 		}
 		out = append(out, fix)
 	}
 	return out, nil
 }
 
-// ApplyDuplicateFix removes the extra sessions a PlanDuplicateFix named.
+// ApplyDuplicateFix removes the extra sessions a PlanDuplicateFix named,
+// carrying their unread deliveries over to the session that survives.
+//
+// The deliveries have to move rather than disappear. The removed row was a
+// real member of the room: it received the messages, and a message whose only
+// delivery is deleted was never read by anyone. Leaving the row in place is
+// not the alternative either -- it is the row that makes room_who count the
+// chat twice. Moving is the only outcome that loses nothing.
 func (h *Hub) ApplyDuplicateFix(ctx context.Context, fixes []DuplicateFix) (int, error) {
 	n := 0
 	for _, f := range fixes {
 		for _, id := range f.Remove {
+			if err := h.mergeDeliveries(ctx, id, f.Keep); err != nil {
+				return n, fmt.Errorf("move deliveries from %s: %w", id, err)
+			}
 			if err := h.Leave(ctx, id); err != nil {
 				return n, fmt.Errorf("remove duplicate %s: %w", id, err)
 			}
@@ -884,6 +1157,36 @@ func (h *Hub) ApplyDuplicateFix(ctx context.Context, fixes []DuplicateFix) (int,
 		}
 	}
 	return n, nil
+}
+
+// mergeDeliveries re-points one session's deliveries at another.
+//
+// A delivery is keyed by (message_id, session_id), so a message both rows
+// already hold would collide. The kept row's state wins in that case: it is
+// the row whose reader exists, and a delivery can only move forward, so an
+// older state must not overwrite a newer one.
+func (h *Hub) mergeDeliveries(ctx context.Context, from, to string) error {
+	if from == to {
+		return nil
+	}
+	tx, err := h.db.SQL().BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE OR IGNORE deliveries SET session_id = ?, updated_at = ?
+		WHERE session_id = ?`, to, h.now(), from); err != nil {
+		return err
+	}
+	// Whatever the UPDATE skipped was a duplicate of a delivery the kept row
+	// already had, so it is now redundant rather than lost.
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM deliveries WHERE session_id = ?`, from); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // HasRoom reports whether a room with this name exists.

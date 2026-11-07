@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 )
@@ -433,5 +435,44 @@ func TestPruneStaleOnUnknownRoomIsHarmless(t *testing.T) {
 	}
 	if n != 0 {
 		t.Fatalf("pruned %d sessions in a room that does not exist", n)
+	}
+}
+
+// A session whose pid was reused must be pruned, and the old check missed it.
+//
+// The scenario is the one the live store had: a row records a pid that some
+// other process now holds. "Is this pid alive" says yes, so prune keeps a
+// session whose chat exited long ago, and room_who shows it forever.
+func TestPruneStaleUsesStartTimeNotJustThePID(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("start times are read from /proc on this path")
+	}
+	ctx := context.Background()
+	h := newHub(t)
+
+	// This test process is the stranger that inherited the number.
+	stale, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "stale", PID: os.Getpid(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Rewrite the recorded start time, which is what a reused pid looks like:
+	// the number is running, but it is not the process the row named.
+	if _, err := h.db.SQL().ExecContext(ctx,
+		`UPDATE sessions SET pid_started_at = pid_started_at + 1 WHERE id = ?`, stale.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	old := h.now
+	t.Cleanup(func() { h.setClock(old) })
+	h.setClock(func() int64 { return old() + 3600 })
+
+	n, err := h.PruneStale(ctx, "repo:x", 30*time.Minute)
+	if err != nil {
+		t.Fatalf("prune: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("pruned %d sessions, want 1: the pid is running but it is not this chat", n)
 	}
 }

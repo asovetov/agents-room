@@ -56,8 +56,8 @@ func runWatch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 			if label == "" {
 				label = s.ID
 			}
-			fmt.Fprintf(stdout, "  %-10s %-12s autonomy=%d  seen %s ago\n",
-				label, s.Harness, s.Autonomy, age)
+			fmt.Fprintf(stdout, "  %-10s %-12s %-7s autonomy=%d  seen %s ago\n",
+				label, s.Harness, livenessWord(s.Liveness), s.Autonomy, age)
 			leases, err := h.List(ctx, s.ID)
 			if err != nil {
 				continue
