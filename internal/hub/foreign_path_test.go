@@ -2,9 +2,22 @@ package hub
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// workPaths returns two absolute directories under a temporary root.
+//
+// They are built with filepath.Join rather than written as "/work/shop" and
+// "/work/bot": a POSIX literal is not an absolute path on Windows, where
+// filepath.Abs turns it into something under the current drive, and the tests
+// then assert about paths the code never saw.
+func workPaths(t *testing.T) (shop, bot string) {
+	t.Helper()
+	root := t.TempDir()
+	return filepath.Join(root, "shop"), filepath.Join(root, "bot")
+}
 
 // A broadcast is filed under the session's own repository room, whichever
 // other rooms it joined. The room list used to come back in whatever order
@@ -42,13 +55,14 @@ func TestClaimWarnsWhenThePathIsOutsideTheCallersDirectory(t *testing.T) {
 	ctx := context.Background()
 	h := newHub(t)
 
+	shop, bot := workPaths(t)
 	s, err := h.Join(ctx, JoinOptions{
-		Room: "repo:bot", Harness: "test", Cwd: "/work/bot", PID: 4242,
+		Room: "repo:bot", Harness: "test", Cwd: bot, PID: 4242,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := h.Claim(ctx, s.ID, "/work/shop/src/users.go", 60, ModeExclusive)
+	res, err := h.Claim(ctx, s.ID, filepath.Join(shop, "src", "users.go"), 60, ModeExclusive)
 	if err != nil {
 		t.Fatalf("claim: %v", err)
 	}
@@ -58,7 +72,7 @@ func TestClaimWarnsWhenThePathIsOutsideTheCallersDirectory(t *testing.T) {
 	if res.Warning == "" {
 		t.Fatal("no warning for a path outside the caller's directory")
 	}
-	if !strings.Contains(res.Warning, "/work/bot") {
+	if !strings.Contains(res.Warning, bot) {
 		t.Fatalf("warning does not name the caller's directory: %q", res.Warning)
 	}
 }
@@ -69,13 +83,14 @@ func TestClaimDoesNotWarnAboutItsOwnFiles(t *testing.T) {
 	ctx := context.Background()
 	h := newHub(t)
 
+	_, bot := workPaths(t)
 	s, err := h.Join(ctx, JoinOptions{
-		Room: "repo:bot", Harness: "test", Cwd: "/work/bot", PID: 4242,
+		Room: "repo:bot", Harness: "test", Cwd: bot, PID: 4242,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := h.Claim(ctx, s.ID, "/work/bot/src/users.go", 60, ModeExclusive)
+	res, err := h.Claim(ctx, s.ID, filepath.Join(bot, "src", "users.go"), 60, ModeExclusive)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,8 +106,9 @@ func TestSendWarnsWhenAFileSelectorMatchesNobody(t *testing.T) {
 	ctx := context.Background()
 	h := newHub(t)
 
+	_, bot := workPaths(t)
 	s, err := h.Join(ctx, JoinOptions{
-		Room: "repo:bot", Harness: "test", Cwd: "/work/bot", PID: 4242,
+		Room: "repo:bot", Harness: "test", Cwd: bot, PID: 4242,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -119,19 +135,20 @@ func TestSendIsQuietWhenAFileSelectorReachesSomeone(t *testing.T) {
 	ctx := context.Background()
 	h := newHub(t)
 
+	shop, _ := workPaths(t)
 	holder, err := h.Join(ctx, JoinOptions{
-		Room: "repo:shop", Harness: "test", Cwd: "/work/shop", PID: 4242, Label: "shop",
+		Room: "repo:shop", Harness: "test", Cwd: shop, PID: 4242, Label: "shop",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	sender, err := h.Join(ctx, JoinOptions{
-		Room: "repo:shop", ExtraRooms: nil, Harness: "test", Cwd: "/work/shop", PID: 4343, Label: "other",
+		Room: "repo:shop", ExtraRooms: nil, Harness: "test", Cwd: shop, PID: 4343, Label: "other",
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := h.Claim(ctx, holder.ID, "/work/shop/src/users.go", 60, ModeExclusive); err != nil {
+	if _, err := h.Claim(ctx, holder.ID, filepath.Join(shop, "src", "users.go"), 60, ModeExclusive); err != nil {
 		t.Fatal(err)
 	}
 	msg, err := h.Send(ctx, SendOptions{

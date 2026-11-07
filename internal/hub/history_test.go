@@ -2,6 +2,7 @@ package hub
 
 import (
 	"context"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -199,16 +200,19 @@ func TestHistoryOfASharedRoomShowsMessagesSentFromARepository(t *testing.T) {
 	ctx := context.Background()
 	h := newHub(t)
 
+	// Cwd does not matter to this test, but it has to be a path the platform
+	// calls absolute, so it is built rather than written as a POSIX literal.
+	dir := t.TempDir()
 	shop, err := h.Join(ctx, JoinOptions{
 		Room: "repo:shop", ExtraRooms: []string{"shared:storefront"},
-		Harness: "test", Label: "shop", Cwd: "/work/shop", PID: 4242,
+		Harness: "test", Label: "shop", Cwd: filepath.Join(dir, "shop"), PID: 4242,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.Join(ctx, JoinOptions{
 		Room: "repo:bot", ExtraRooms: []string{"shared:storefront"},
-		Harness: "test", Label: "bot", Cwd: "/work/bot", PID: 4343,
+		Harness: "test", Label: "bot", Cwd: filepath.Join(dir, "bot"), PID: 4343,
 	}); err != nil {
 		t.Fatal(err)
 	}
