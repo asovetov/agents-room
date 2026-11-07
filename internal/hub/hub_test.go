@@ -994,3 +994,73 @@ func TestSentReportsRecipientsThatLeft(t *testing.T) {
 		t.Fatalf("recipients = %d, want 1 delivery left on disk", got.Recipients)
 	}
 }
+
+// Collapsing two rows for one chat must not un-read a message.
+//
+// Where both rows already hold the same message, the kept row's state wins in
+// a plain UPDATE OR IGNORE, and on the live store that turned a `read` into an
+// `offered`: the sender would have been told nobody read what someone had.
+func TestApplyDuplicateFixKeepsTheMoreAdvancedDeliveryState(t *testing.T) {
+	if !hasProcFS {
+		t.Skip("process environments are read from /proc on this path")
+	}
+	ctx := context.Background()
+	h := newHub(t)
+
+	sender := join(t, h, "repo:x", "sender")
+	keep, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "chat", PID: 4242,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SQL().ExecContext(ctx, `
+		INSERT INTO sessions (id, room_id, harness, cwd, pid, pid_started_at, label,
+		                      tags, autonomy, joined_at, last_seen, harness_key)
+		SELECT 'ghost', room_id, harness, cwd, ?, 0, label, tags, autonomy,
+		       joined_at, joined_at, '' FROM sessions WHERE id = ?`,
+		standInChat(t, "chat"), keep.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SQL().ExecContext(ctx, `
+		INSERT INTO session_rooms (session_id, room_id, joined_at)
+		SELECT 'ghost', room_id, joined_at FROM session_rooms WHERE session_id = ?`, keep.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	// One message both rows hold, at different points.
+	msg, err := h.Send(ctx, SendOptions{From: sender.ID, To: "*", Subject: "hi", Body: "x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The ghost read it; the kept row only got as far as being offered.
+	if _, err := h.db.SQL().ExecContext(ctx,
+		`UPDATE deliveries SET state = ? WHERE message_id = ? AND session_id = 'ghost'`,
+		StateRead, msg.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.db.SQL().ExecContext(ctx,
+		`UPDATE deliveries SET state = ? WHERE message_id = ? AND session_id = ?`,
+		StateOffered, msg.ID, keep.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	plan, err := h.PlanDuplicateFix(ctx)
+	if err != nil {
+		t.Fatalf("plan: %v", err)
+	}
+	if _, err := h.ApplyDuplicateFix(ctx, plan); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var state string
+	if err := h.db.SQL().QueryRowContext(ctx,
+		`SELECT state FROM deliveries WHERE message_id = ? AND session_id = ?`,
+		msg.ID, keep.ID).Scan(&state); err != nil {
+		t.Fatalf("read state: %v", err)
+	}
+	if state != StateRead {
+		t.Fatalf("delivery state = %q, want %q: the message was read in the row that went away",
+			state, StateRead)
+	}
+}
