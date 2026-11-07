@@ -3,6 +3,7 @@
 package hub
 
 import (
+	"errors"
 	"os"
 	"syscall"
 )
@@ -54,10 +55,13 @@ func processAlive(pid int) bool {
 		return false
 	}
 	err = p.Signal(syscall.Signal(0))
-	switch err {
-	case nil, syscall.EPERM:
+	switch {
+	case err == nil, errors.Is(err, syscall.EPERM):
 		return true
-	case syscall.ESRCH:
+	case errors.Is(err, syscall.ESRCH), errors.Is(err, os.ErrProcessDone):
+		// A process this one started and reaped answers ErrProcessDone, not
+		// ESRCH. That is the common case in a test, and missing it here read
+		// a retired pid as alive on macOS.
 		return false
 	default:
 		// An unexpected error is not evidence of death.
