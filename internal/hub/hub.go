@@ -1212,18 +1212,83 @@ func (h *Hub) mergeDeliveries(ctx context.Context, from, to string) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.ExecContext(ctx, `
-		UPDATE OR IGNORE deliveries SET session_id = ?, updated_at = ?
-		WHERE session_id = ?`, to, h.now(), from); err != nil {
+	// Where both rows already hold the same message, the more advanced state
+	// has to survive. A plain UPDATE OR IGNORE keeps the target's row and
+	// discards the source's, which on the live store would have turned a
+	// `read` into an `offered` and told a sender nobody had read a message
+	// that someone had. The state order is the one the protocol defines.
+	rows, err := tx.QueryContext(ctx, `
+		SELECT message_id, state FROM deliveries WHERE session_id = ?`, from)
+	if err != nil {
 		return err
 	}
-	// Whatever the UPDATE skipped was a duplicate of a delivery the kept row
-	// already had, so it is now redundant rather than lost.
+	type move struct{ messageID, state string }
+	var moves []move
+	for rows.Next() {
+		var m move
+		if err := rows.Scan(&m.messageID, &m.state); err != nil {
+			rows.Close()
+			return err
+		}
+		moves = append(moves, m)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	for _, m := range moves {
+		var existing string
+		err := tx.QueryRowContext(ctx, `
+			SELECT state FROM deliveries WHERE message_id = ? AND session_id = ?`,
+			m.messageID, to).Scan(&existing)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+			if _, err := tx.ExecContext(ctx, `
+				INSERT INTO deliveries (message_id, session_id, state, updated_at)
+				VALUES (?, ?, ?, ?)`, m.messageID, to, m.state, h.now()); err != nil {
+				return err
+			}
+		case err != nil:
+			return err
+		case deliveryRank(m.state) > deliveryRank(existing):
+			if _, err := tx.ExecContext(ctx, `
+				UPDATE deliveries SET state = ?, updated_at = ?
+				WHERE message_id = ? AND session_id = ?`,
+				m.state, h.now(), m.messageID, to); err != nil {
+				return err
+			}
+		}
+	}
 	if _, err := tx.ExecContext(ctx,
 		`DELETE FROM deliveries WHERE session_id = ?`, from); err != nil {
 		return err
 	}
 	return tx.Commit()
+}
+
+// deliveryRank orders delivery states by how far along they are, so a merge
+// of two rows for one message keeps the more advanced one.
+//
+// Terminal states that are not progress -- expired and undeliverable -- rank
+// with the states they end, because a message that was read in one row was
+// not "expired" in any sense the sender cares about.
+func deliveryRank(state string) int {
+	switch state {
+	case StateStored:
+		return 0
+	case StateUndeliverable, StateOffered:
+		return 1
+	case StateAccepted:
+		return 2
+	case StateRead:
+		return 3
+	case StateAcked:
+		return 4
+	case StateExpired:
+		return 0
+	}
+	return 0
 }
 
 // HasRoom reports whether a room with this name exists.
