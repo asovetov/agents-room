@@ -571,3 +571,88 @@ func retiredPID(t *testing.T) int {
 	}
 	return cmd.Process.Pid
 }
+
+// A live session that has reported no tool call for hours is running without
+// the hook: its leases lapse and wake signals reach nobody. Every symptom
+// looks like a room problem, so doctor has to name the real cause.
+func TestDoctorReportsALiveSessionWithNoHook(t *testing.T) {
+	run := setup(t)
+	t.Setenv("AGENTS_ROOM_PID", strconv.Itoa(os.Getpid()))
+	room := hub.RepoRoom("")
+	_, out, _ := run("join", "--room", room, "--key", "quiet")
+	id := strings.TrimSpace(out)
+
+	db, err := store.Open(os.Getenv("AGENTS_ROOM_DB"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	// Alive, but last seen three hours ago.
+	if _, err := db.SQL().ExecContext(context.Background(),
+		`UPDATE sessions SET last_seen = ? WHERE id = ?`, time.Now().Unix()-3*3600, id); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+
+	_, report, _ := run("doctor")
+	if !strings.Contains(report, "reported no tool call") {
+		t.Fatalf("doctor did not notice the missing hook:\n%s", report)
+	}
+}
+
+// A quiet session that is also gone is a different finding; the hook warning
+// must not fire for it, or every dead row looks like a broken install.
+func TestDoctorDoesNotBlameTheHookForAGoneSession(t *testing.T) {
+	run := setup(t)
+	t.Setenv("AGENTS_ROOM_PID", strconv.Itoa(retiredPID(t)))
+	room := hub.RepoRoom("")
+	_, out, _ := run("join", "--room", room, "--key", "gone")
+	id := strings.TrimSpace(out)
+
+	db, err := store.Open(os.Getenv("AGENTS_ROOM_DB"))
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer db.Close()
+	if _, err := db.SQL().ExecContext(context.Background(),
+		`UPDATE sessions SET last_seen = ?, pid_started_at = 0 WHERE id = ?`,
+		time.Now().Unix()-3*3600, id); err != nil {
+		t.Fatalf("exec: %v", err)
+	}
+
+	_, report, _ := run("doctor")
+	if strings.Contains(report, "reported no tool call") {
+		t.Fatalf("doctor blamed the hook for a session whose chat is gone:\n%s", report)
+	}
+}
+
+// history is the command a newcomer runs to learn what the room decided.
+func TestHistoryCommandShowsEarlierMessages(t *testing.T) {
+	run := setup(t)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	_, out, _ := run("join", "--room", "repo:x", "--key", "a")
+	id := strings.TrimSpace(out)
+	// A direct send to the sender's own session is not the point; what the
+	// test needs is a message filed in the room. * reaches everyone else in
+	// it, and with one session that is nobody, so the message is stored with
+	// zero recipients -- which is exactly the case history has to show.
+	run("send", "--session", id, "--to", "*", "--subject", "the api needs a phone field")
+
+	code, hist, errOut := run("history", "--room", "repo:x")
+	if code != 0 {
+		t.Fatalf("history exit %d: %s", code, errOut)
+	}
+	if !strings.Contains(hist, "the api needs a phone field") {
+		t.Fatalf("history did not show the message:\n%s", hist)
+	}
+}
+
+func TestHistoryCommandOnAnEmptyRoom(t *testing.T) {
+	run := setup(t)
+	code, out, _ := run("history", "--room", "repo:nothing")
+	if code != 0 {
+		t.Fatalf("history exit %d", code)
+	}
+	if !strings.Contains(out, "no messages") {
+		t.Fatalf("empty room did not say so:\n%s", out)
+	}
+}

@@ -307,11 +307,16 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 	}
 
 	for i, id := range roomIDs {
+		// joined_at is incremented per room so the join order is recorded,
+		// not just the moment. All the rooms of one join share a second, so
+		// without this the repository room and a shared room are
+		// indistinguishable and "the session's own room" becomes whichever
+		// row SQLite returns first.
 		if _, err := h.db.SQL().ExecContext(ctx, `
 			INSERT INTO session_rooms (session_id, room_id, joined_at)
 			VALUES (?, ?, ?)
 			ON CONFLICT(session_id, room_id) DO NOTHING`,
-			sessionID, id, now); err != nil {
+			sessionID, id, now+int64(i)); err != nil {
 			return nil, fmt.Errorf("join room %q: %w", rooms[i], err)
 		}
 	}
@@ -512,10 +517,18 @@ func (h *Hub) RoomsOf(ctx context.Context, sessionID string) ([]string, error) {
 	return out, rows.Err()
 }
 
-// sessionRoomIDs returns the room ids a session belongs to.
+// sessionRoomIDs returns the room ids a session belongs to, oldest membership
+// first.
+//
+// The order matters: callers use the first id as "the session's room", for the
+// room a lease or a message is filed under. Without it SQLite may return the
+// rows in any order, so a broadcast from a chat in three rooms was filed under
+// whichever one came back first -- on the live store a `repo:gcs` message was
+// attributed to `storefront`.
 func (h *Hub) sessionRoomIDs(ctx context.Context, sessionID string) ([]string, error) {
 	rows, err := h.db.SQL().QueryContext(ctx,
-		`SELECT room_id FROM session_rooms WHERE session_id = ?`, sessionID)
+		`SELECT room_id FROM session_rooms WHERE session_id = ?
+		 ORDER BY joined_at ASC, room_id ASC`, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("list session rooms: %w", err)
 	}
@@ -988,11 +1001,16 @@ func (h *Hub) DuplicatePIDs(ctx context.Context) []DuplicatePID {
 		}
 	}
 
-	// Rows already accounted for by a key are not reported a second time.
-	seen := map[string]bool{}
+	// Which rows a key group already covers, and by which identity.
+	// A pid group is a *different* defect even when its rows are also in a
+	// key group: two rows on one pid are one chat registered twice, and the
+	// key grouping does not say so. Filtering those rows out entirely is what
+	// let a live store hold three rows for one chat while doctor reported
+	// only the key collision and named none of the pid duplicates.
+	byKey := map[string]string{}
 	for _, d := range out {
 		for _, id := range d.IDs {
-			seen[id] = true
+			byKey[id] = d.Identity
 		}
 	}
 
@@ -1011,13 +1029,26 @@ func (h *Hub) DuplicatePIDs(ctx context.Context) []DuplicatePID {
 		if rows.Scan(&d.PID, &ids) != nil {
 			continue
 		}
+		// A pid group is skipped only when every one of its rows is already
+		// accounted for by the same key: that is one finding, not two.
+		identity := ""
+		sameGroup := true
 		var fresh []string
 		for _, id := range strings.Split(ids, ",") {
-			if !seen[id] {
+			key, ok := byKey[id]
+			if !ok {
 				fresh = append(fresh, id)
+				sameGroup = false
+				continue
 			}
+			if identity == "" {
+				identity = key
+			} else if identity != key {
+				sameGroup = false
+			}
+			fresh = append(fresh, id)
 		}
-		if len(fresh) < 2 {
+		if sameGroup {
 			continue
 		}
 		d.Kind = "pid"

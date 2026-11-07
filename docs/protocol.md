@@ -164,6 +164,43 @@ only the rows on disk would say "still waiting" about a session that no
 longer exists. The recipient count recorded in the `message.send` event is
 what makes the difference visible: `sent == recipients + left`.
 
+### A message belongs to every room it reaches
+
+Deliveries answer "what is waiting for me". They cannot answer "what has been
+decided here", because they are created at send time: a session that joins
+afterwards has none, and `msg_recv` correctly returns nothing.
+
+`room_history` answers the second question. It reads `message_rooms`, which
+holds one row per (message, room) for every room the sender was in when it
+sent. That is what makes a shared room's history complete: an agent in
+`repo:bot` writing to an agent it meets in `shared:storefront` leaves the
+message findable in both, and the shared room does not read as empty while
+work is plainly going on.
+
+History is read-only and never marks a delivery read. A session that catches
+up this way has not acknowledged anything addressed to it, and saying
+otherwise would make the delivery states lie.
+
+`room_join` returns one line when a room saw traffic in the last day, naming
+the count and the latest subject, so the joining agent knows to call
+`room_history` instead of trusting `msg_recv`'s silence.
+
+### A path is relative to your own checkout
+
+`file:` patterns and lease paths are resolved against the caller's working
+directory. That is the only sensible rule, and it is also the trap: an agent
+meaning another repository's `src/users.go` writes a relative path, leases its
+own `src/users.go`, and both sides believe they agreed.
+
+Both operations therefore warn when the result looks wrong rather than
+refusing, because cross-repository leases are exactly what the tool is for:
+
+- `lease_claim` warns when the claimed path is outside the caller's own
+  directory.
+- `msg_send` warns when a `file:` selector matched nobody, names the absolute
+  path the pattern meant from the sender's directory, and says to use the
+  absolute path to reach another repository.
+
 ## Delivery states
 
 Each recipient gets its own row. State only moves forward.
@@ -247,11 +284,12 @@ for it. Re-read before editing.
 | `room_leave_room` | `session_id`, `room` | nothing, stays in the rest |
 | `room_who` | `session_id?`, `room?` | sessions, each with `liveness` |
 | `room_set_autonomy_cap` | `session_id?`, `room?`, `autonomy` | `room`, `autonomy` |
-| `msg_send` | `session_id`, `to`, `subject?`, `body?`, `reply_to?`, `ttl_s?` | `message_id`, `recipients` |
+| `msg_send` | `session_id`, `to`, `subject?`, `body?`, `reply_to?`, `ttl_s?` | `message_id`, `recipients`, `warning?` |
 | `msg_recv` | `session_id`, `limit?` | messages, marked read |
 | `msg_ack` | `session_id`, `message_id` | nothing |
 | `msg_unread` | `session_id` | `count` |
 | `msg_sent` | `session_id`, `limit?` | `messages`: each with `states`, `pending`, `left`, `sent` |
+| `room_history` | `session_id?`, `room?`, `limit?` | `room`, `messages` (read-only) |
 | `lease_claim` | `session_id`, `path`, `ttl_s?`, `mode?` | `ok`, `holder`, `reason` |
 | `lease_renew` | `session_id`, `path`, `ttl_s?` | the renewed lease |
 | `lease_release` | `session_id`, `path` | nothing |

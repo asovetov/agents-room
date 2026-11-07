@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -110,6 +111,14 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 			// The model reads this text, and a wrong key silently adopts
 			// another chat's session, so it has to be visible, not logged.
 			msg += "\nwarning: " + sess.Warning
+		}
+		// A session joining a room where work is already under way has no
+		// unread deliveries, so msg_recv will correctly say nothing is
+		// waiting -- and the model then assumes nothing has happened. One
+		// line here is the difference between an agent that reads the room's
+		// history and one that starts from zero.
+		if summary := roomActivity(ctx, h, sess.Rooms); summary != "" {
+			msg += "\n" + summary
 		}
 		return text(msg),
 			joinOut{SessionID: sess.ID, Rooms: sess.Rooms, Autonomy: sess.Autonomy, Warning: sess.Warning}, nil
@@ -225,6 +234,9 @@ type sendIn struct {
 
 type sendOut struct {
 	MessageID string `json:"message_id"`
+	// Warning is set when the message was stored but looks like it reached
+	// the wrong place, such as a file: selector that matched nobody.
+	Warning string `json:"warning,omitempty"`
 	// Recipients is zero when the selector matched nobody: the message is
 	// stored but will never be read, so the sender must not assume delivery.
 	Recipients int `json:"recipients"`
@@ -247,11 +259,17 @@ func registerMessageTools(s *mcp.Server, h *hub.Hub) {
 			return nil, sendOut{}, err
 		}
 		if m.Recipients == 0 {
-			return text(fmt.Sprintf("stored %s, but %s matched no recipient", m.ID, m.Selector)),
-				sendOut{MessageID: m.ID}, nil
+			msg := fmt.Sprintf("stored %s, but %s matched no recipient", m.ID, m.Selector)
+			if m.Warning != "" {
+				msg += "\n" + m.Warning
+			}
+			return text(msg), sendOut{MessageID: m.ID, Warning: m.Warning}, nil
 		}
-		return text(fmt.Sprintf("sent %s to %d session(s)", m.ID, m.Recipients)),
-			sendOut{MessageID: m.ID, Recipients: m.Recipients}, nil
+		msg := fmt.Sprintf("sent %s to %d session(s)", m.ID, m.Recipients)
+		if m.Warning != "" {
+			msg += "\n" + m.Warning
+		}
+		return text(msg), sendOut{MessageID: m.ID, Recipients: m.Recipients, Warning: m.Warning}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -300,6 +318,48 @@ func registerMessageTools(s *mcp.Server, h *hub.Hub) {
 		}
 		return text(describeSent(sent)), sentOut{Messages: sent}, nil
 	})
+
+	mcp.AddTool(s, &mcp.Tool{
+		Name: "room_history",
+		Description: "Read what has been said in a room recently. Call this after " +
+			"joining a room where work is already under way: msg_recv only shows " +
+			"messages addressed to you since you joined, so it says nothing about " +
+			"what the others already agreed. Read-only; it does not mark anything read.",
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, in historyIn) (*mcp.CallToolResult, historyOut, error) {
+		room := in.Room
+		if room == "" && in.SessionID != "" {
+			room = h.RoomOf(ctx, in.SessionID)
+		}
+		if room == "" {
+			room = hub.RepoRoom("")
+		}
+		entries, err := h.History(ctx, room, in.Limit)
+		if err != nil {
+			return nil, historyOut{}, err
+		}
+		return text(describeHistory(room, entries)), historyOut{Room: room, Messages: entries}, nil
+	})
+}
+
+// describeHistory renders a room's recent messages as the lines a model reads.
+func describeHistory(room string, entries []hub.HistoryEntry) string {
+	if len(entries) == 0 {
+		return fmt.Sprintf("no messages in %s", room)
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "%d message(s) in %s, oldest first:\n", len(entries), room)
+	for _, e := range entries {
+		from := e.Sender
+		if e.SenderTag != "" {
+			from = e.SenderTag
+		}
+		fmt.Fprintf(&b, "%s  %s -> %s: %s\n",
+			time.Unix(e.CreatedAt, 0).Format("01-02 15:04"), from, e.Selector, e.Subject)
+		if e.Body != "" {
+			fmt.Fprintf(&b, "    %s\n", e.Body)
+		}
+	}
+	return b.String()
 }
 
 // describeSent renders the sent list as the few lines a model reads.
@@ -410,7 +470,11 @@ func registerLeaseTools(s *mcp.Server, h *hub.Hub) {
 		if !res.OK {
 			return text(fmt.Sprintf("denied: %s holds %s", res.Holder.Owner, res.Holder.Path)), *res, nil
 		}
-		return text("granted: " + res.Holder.Path), *res, nil
+		msg := "granted: " + res.Holder.Path
+		if res.Warning != "" {
+			msg += "\n" + res.Warning
+		}
+		return text(msg), *res, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -510,4 +574,43 @@ func text(s string) *mcp.CallToolResult {
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{&mcp.TextContent{Text: s}},
 	}
+}
+
+type historyIn struct {
+	SessionID string `json:"session_id,omitempty" jsonschema:"your session id; used to pick your room when room is omitted"`
+	Room      string `json:"room,omitempty" jsonschema:"room to read; omit for your repository room"`
+	Limit     int    `json:"limit,omitempty" jsonschema:"maximum messages, newest kept"`
+}
+
+type historyOut struct {
+	Room     string             `json:"room"`
+	Messages []hub.HistoryEntry `json:"messages"`
+}
+
+// roomActivity describes recent traffic in the rooms a session just joined, so
+// a joining agent knows whether there is history worth reading.
+//
+// It reports only rooms that saw something in the last day, and only one line
+// each: the point is to prompt a room_history call, not to put the history
+// itself into the context.
+func roomActivity(ctx context.Context, h *hub.Hub, rooms []string) string {
+	var lines []string
+	for _, room := range rooms {
+		s, err := h.Summarize(ctx, room, 24*time.Hour)
+		if err != nil || s == nil || s.Messages == 0 {
+			continue
+		}
+		line := fmt.Sprintf("%s: %d message(s) in the last day", room, s.Messages)
+		if s.Last != "" {
+			line += fmt.Sprintf(", the last from %s about %q", s.LastFrom, s.Last)
+		}
+		lines = append(lines, line)
+		// Only one line: the room the session came for is the first one it
+		// joined, and a wall of summaries is the context bloat this avoids.
+		break
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return lines[0] + " -- call room_history to read it"
 }

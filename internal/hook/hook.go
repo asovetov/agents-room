@@ -118,8 +118,15 @@ func runWithInput(harness, event, room string, autonomy int, in hookInput) int {
 		// Every tool event is proof that the session is still working, which
 		// is exactly when its leases must not lapse. A session that does
 		// nothing at all is the one that should lose them.
+		//
+		// The same event is proof the session is alive, so last_seen moves
+		// here too. It used to move only through the MCP middleware, which
+		// misses the case where the agent works without calling an MCP tool:
+		// a session editing files for an hour never touches the room, `who`
+		// calls it quiet, and doctor blames a hook that is in fact running.
 		if s, err := h.FindSession(ctx, roomName, harness, in.SessionID); err == nil && s != nil {
 			_, _ = h.RenewAll(ctx, s.ID, leaseTTL)
+			_ = h.Touch(ctx, s.ID)
 		}
 		return nudge(ctx, h, harness, roomName, in.SessionID, event, in.StopHookActive)
 	}

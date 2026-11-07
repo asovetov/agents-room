@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/asovetov/agents-room/internal/store"
 )
@@ -44,6 +45,11 @@ type LeaseResult struct {
 	OK     bool   `json:"ok"`
 	Holder *Lease `json:"holder,omitempty"`
 	Reason string `json:"reason,omitempty"`
+	// Warning is set when the claim succeeded but on a path that is probably
+	// not the one the caller meant. It is not an error: a relative path is
+	// legitimately relative to the caller's own directory, and refusing it
+	// would break the ordinary case.
+	Warning string `json:"warning,omitempty"`
 }
 
 // Claim tries to take a lease on path.
@@ -161,7 +167,43 @@ func (h *Hub) Claim(ctx context.Context, sessionID, path string, ttlSeconds int6
 	if err != nil {
 		return nil, err
 	}
-	return &LeaseResult{OK: true, Holder: lease}, nil
+	return &LeaseResult{
+		OK: true, Holder: lease,
+		Warning: h.foreignPathWarning(ctx, sessionID, path),
+	}, nil
+}
+
+// foreignPathWarning reports a claim on a file that lives in another
+// repository's checkout.
+//
+// A relative path is resolved against the caller's own working directory,
+// which is the only sensible rule. The trap is that an agent meaning "the api
+// repository's src/users.go" writes a relative path and silently leases its
+// own `src/users.go`, which is a different file; the grant looks like success
+// and the two agents believe they agreed. A path outside the caller's own
+// directory is therefore reported, not refused: cross-repository leases are
+// exactly what the tool is for, and the absolute path is how you mean them.
+func (h *Hub) foreignPathWarning(ctx context.Context, sessionID, path string) string {
+	var cwd string
+	if err := h.db.SQL().QueryRowContext(ctx,
+		`SELECT cwd FROM sessions WHERE id = ?`, sessionID).Scan(&cwd); err != nil || cwd == "" {
+		return ""
+	}
+	if withinDir(path, cwd) {
+		return ""
+	}
+	return fmt.Sprintf("leased %s, which is outside your working directory %s; "+
+		"a relative path is resolved against your own repository, so if you "+
+		"meant another repository's file, pass its absolute path", path, cwd)
+}
+
+// withinDir reports whether path is dir or below it.
+func withinDir(path, dir string) bool {
+	rel, err := filepath.Rel(dir, path)
+	if err != nil {
+		return false
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // Renew extends a lease the session already holds.

@@ -258,6 +258,11 @@ Codex, Hermes и любой другой MCP-клиент — в
 | `agents-room version` | версия, которая сейчас работает |
 | `agents-room path` | какая база используется |
 
+`agents-room history --room <имя>` читает, что говорили в комнате. Запускайте
+после входа туда, где работа уже идёт: `recv` показывает только то, что
+адресовано вам после вашего входа, и ничего не говорит о том, о чём
+договорились до вас.
+
 ```bash
 agents-room join --label "users API" --tag backend --autonomy 1 --key "$SESSION_ID"
 agents-room join --also shared:storefront    # встретить агентов из других репо
@@ -266,6 +271,7 @@ agents-room cap --set 1                      # потолок автономии
 agents-room lease claim --session $ID --path src/api/users.go --ttl 600
 agents-room send --session $ID --to file:src/api/users.go --subject "нужно поле phone"
 agents-room sent --session $ID               # что стало с отправленным
+agents-room history --room shared:storefront # что решили до вашего прихода
 agents-room recv --session $ID
 agents-room watch                            # живой вид, опросом
 ```
@@ -274,8 +280,8 @@ agents-room watch                            # живой вид, опросом
 `room_leave_room`, `room_who`, `room_set_autonomy_cap`, `msg_send`,
 `msg_recv`, `msg_ack`, `msg_unread`, `msg_sent`, `lease_claim`,
 `lease_renew`, `lease_release`, `lease_check`, `lease_list`, `note_read`,
-`drift_check`. Полный справочник, включая селекторы и состояния доставки, —
-в [`docs/protocol.md`](docs/protocol.md).
+`drift_check`, `room_history`. Полный справочник, включая селекторы и
+состояния доставки, — в [`docs/protocol.md`](docs/protocol.md).
 
 ## Как не обмануться
 

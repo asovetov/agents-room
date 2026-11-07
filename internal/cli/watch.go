@@ -71,6 +71,20 @@ func runWatch(ctx context.Context, args []string, stdout, stderr io.Writer) int 
 				fmt.Fprintf(stdout, "    %d unread\n", n)
 			}
 		}
+		// What the room is saying, not just who is in it. The operator
+		// watching this screen is usually asking "are they getting anywhere",
+		// and sessions alone cannot answer that.
+		if entries, err := h.History(ctx, name, 8); err == nil && len(entries) > 0 {
+			fmt.Fprintln(stdout, "\n  recent messages")
+			for _, e := range entries {
+				from := e.Sender
+				if e.SenderTag != "" {
+					from = e.SenderTag
+				}
+				fmt.Fprintf(stdout, "    %s  %-10s %s\n",
+					time.Unix(e.CreatedAt, 0).Format("15:04"), from, e.Subject)
+			}
+		}
 	}
 
 	if *once {
