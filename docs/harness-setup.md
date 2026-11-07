@@ -27,11 +27,16 @@ Add to `~/.claude.json` or the project `.mcp.json`:
 {
   "mcpServers": {
     "agents-room": {
-      "command": "agents-room"
+      "command": "agents-room",
+      "args": ["mcp"]
     }
   }
 }
 ```
+
+`args: ["mcp"]` is required. The binary without a subcommand prints its
+usage and exits, so a registration that omits it starts a server that never
+answers.
 
 ### Hooks
 
@@ -167,6 +172,7 @@ MCP server registration:
 # ~/.codex/config.toml
 [mcp_servers.agents-room]
 command = "agents-room"
+args = ["mcp"]
 ```
 
 Codex has no cross-session message bus of its own (`codex queue` writes into
@@ -215,7 +221,6 @@ mcp_servers:
   agents-room:
     command: agents-room
     args: ["mcp"]
-    args: []
 ```
 
 Hermes asks for consent the first time it sees a `(event, command)` pair.

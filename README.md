@@ -1,41 +1,71 @@
 # agents-room
 
-A coordination layer for AI coding agents working in the same codebase from
-different terminals and different harnesses.
+Coordination for AI coding agents that share a codebase.
 
-You run five agent sessions on one large project. Each one edits files, makes
-decisions, and moves on. Nothing tells session two that session one is already
-in `src/api/`. Nothing tells the agent in the other repository that the
-wire format changed. You become the courier, copying messages between windows.
+[Русская версия →](README.ru.md)
 
-agents-room answers three questions the harnesses do not answer:
+You have five agent sessions open on one project. Each one edits files,
+decides things, and moves on. Nothing tells session two that session one is
+already rewriting `src/api/`. Nothing tells the agent in the sibling
+repository that the wire format changed. You end up the courier, copying
+messages between windows.
 
-- **Who is here?** Which sessions are working in this project, on what, right now.
-- **Who is touching this file?** Leases on paths, with expiry and stale-holder detection.
-- **Is my read still valid?** Drift warnings when a file changed under you.
+agents-room is the missing layer. It answers three questions the harnesses
+do not:
+
+- **Who is here?** Which sessions are working in this project right now, and
+  which of them are actually still running.
+- **Who is touching this file?** Leases on paths, with expiry and stale-holder
+  detection.
+- **Is my read still valid?** A warning when a file changed under you.
 
 It also delivers messages addressed by *what* rather than *who*:
 `file:src/api/**` reaches whoever holds those files, `tag:protocol`
 reaches everyone working on the protocol.
 
-A session can be in several rooms at once: its repository room plus any
-number of shared rooms. Agents in `gcs`, `link` and `storefront-web` that
-join `shared:storefront` can message each other and contend for the same
-files, which is what makes contract work across repositories possible.
+## A session, in thirty seconds
+
+```bash
+agents-room join --label "users API" --tag protocol   # prints a session id
+agents-room who                                             # who is here
+agents-room lease claim --session $ID --path src/wire.go    # claim a file
+agents-room send --session $ID --to file:src/api/** \
+  --subject "dialect changed" --body "bump to v3"
+```
+
+That is the whole loop. Everything else — MCP tools, harness hooks, autonomy
+levels — is about making it happen without you typing.
+
+## Why not just use the harness
+
+Most harnesses can message another session if you know its id. They do not
+know who is in the project, which files are contested, or whether the agent
+that was editing a file is still alive. That is the gap this fills.
+
+| | Harness messaging | agents-room |
+|---|---|---|
+| Reach a session by id | yes | yes |
+| Reach whoever holds a file | no | yes, `file:` selector |
+| Reach everyone on a topic | no | yes, `tag:` selector |
+| Know who is in the project | no | yes, `who` |
+| Know if a chat is still running | no | yes, `alive` / `gone` |
+| Stop two agents editing one file | no | yes, leases |
+| Warn that a file moved under you | no | yes, drift |
+| Work across repositories | no | yes, shared rooms |
 
 ## What it is not
 
-- Not a chat platform. Lasting decisions belong in your long-term memory tool.
-- Not a replacement for a harness's own cross-session messaging. Where the
-  harness can reach a peer natively, agents-room adds the part it cannot do:
-  leases, presence, and addressing by file.
-- Not a multi-machine service. One machine, one store.
+- **Not a chat platform.** Lasting decisions belong in your long-term memory
+  tool. Messages here are coordination, and they expire.
+- **Not a daemon.** There is no service to start, no port, no pid file.
+- **Not multi-machine.** One machine, one store. That is a deliberate limit.
+- **Not a harness replacement.** It plugs into what you already run.
 
 ## How it works
 
-There is no daemon. The shared state is a SQLite database in WAL mode at
-`~/.agents-room/room.db`, and every participant is a short-lived process that
-opens it directly.
+The shared state is a single SQLite file in WAL mode. Every participant —
+the CLI, the MCP server, each hook — is a short-lived process that opens it
+directly.
 
 ```
    Claude Code        Codex           Hermes        (any MCP client)
@@ -48,12 +78,38 @@ opens it directly.
               leases · drift · events
 ```
 
-Why no daemon: no port to manage, no orphan process, a crashed agent cannot
-take the shared state with it, and rooms across related repositories work
-without extra plumbing.
+No daemon means no port to manage, no orphan process, and no way for a
+crashed agent to take the shared state down with it. Concurrency is SQLite's
+job: a lease is claimed inside `BEGIN IMMEDIATE`, so two agents claiming one
+file cannot both win.
 
-Concurrency is SQLite's job. Leases are claimed inside `BEGIN IMMEDIATE`, so
-two agents claiming the same file cannot both win.
+## Rooms
+
+Every session joins `repo:<name of the current directory>`. That is where it
+is found by default.
+
+A session can also join **shared rooms** — named groups that cross
+repositories. Agents in `gcs`, `link` and `storefront-web` that all join
+`shared:storefront` can message each other and contend for the same files.
+That is what makes contract work across repositories possible.
+
+The hook discovers shared rooms from two optional sources, so a team does not
+have to remember a flag on every session:
+
+```bash
+# once, in your shell profile: every repository on this machine
+export AGENTS_ROOM_SHARED=storefront
+```
+
+```text
+# <repository>/.agents-room/shared-rooms: travels with the checkout
+storefront
+```
+
+A `join` run from the CLI or an MCP tool does not read those sources — pass
+`--also storefront` or `extra_rooms` yourself there. The `shared:` prefix is
+added when missing, so `storefront` and `shared:storefront` are one room, not
+two that look alike.
 
 ## Wake signals
 
@@ -63,18 +119,18 @@ A recipient is told that messages are waiting; it fetches the body itself.
 [agents-room] 2 unread in room "repo:gcs"; call msg_recv
 ```
 
-The body stays in the store and arrives as a tool result. This keeps context
-small and makes the delivery state honest: `read` means the recipient saw the
-content, not that a notification was emitted.
+The body stays in the store and arrives as a tool result. That keeps the
+context small and makes the delivery state honest: `read` means the recipient
+saw the content, not that a notification went out.
 
-For Claude Code the signal is posted to the session's own inbox socket, which
-wakes an idle session without approval. For other harnesses the hook falls
-back to their event contract, and for harnesses with no wake lever the
-message waits as `undeliverable` until the agent pulls it.
+For Claude Code the signal goes to the session's own inbox socket, which
+wakes an idle session without asking you. For harnesses with no wake lever
+the message waits as `undeliverable` until the agent pulls it.
 
 ## Autonomy
 
-Each session runs at one of three levels, negotiated with the operator:
+Each session runs at one of three levels. The level decides whether a wake
+signal may interrupt the agent and whether the end of a turn may be held.
 
 | Level | Name | Behaviour |
 |---|---|---|
@@ -84,7 +140,12 @@ Each session runs at one of three levels, negotiated with the operator:
 
 Level 1 suits heavy contention or a long important task. Level 2 suits an
 operator who stepped away. Level 0 suits an operator sitting next to the
-machine. `room_who` shows every session's effective level.
+machine.
+
+The effective level is the **minimum** of what the agent asks for and what
+the operator allows, so raising a room cap never silently grants interrupt
+rights to a session that did not ask for them. `who` shows every session's
+effective level.
 
 ## Install
 
@@ -93,50 +154,111 @@ go install github.com/asovetov/agents-room/cmd/agents-room@latest
 ```
 
 One static binary, Linux, macOS and Windows on amd64 and arm64. No cgo, no
-external runtime. Setup per harness is in
-[`docs/harness-setup.md`](docs/harness-setup.md).
+external runtime.
+
+`go install` puts it in `$(go env GOPATH)/bin`, which is often not on `PATH`.
+To install somewhere that is:
+
+```bash
+GOBIN=~/.local/bin go install github.com/asovetov/agents-room/cmd/agents-room@latest
+```
+
+Or download a release binary; the checksums are signed, and `agents-room
+update` verifies them for you.
+
+## Setup
+
+The binary is three things in one: the CLI, the MCP server (`agents-room
+mcp`), and the harness hook (`agents-room hook`). Nothing else to install.
+
+### Claude Code
+
+MCP server, in `~/.claude.json` or the project `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "agents-room": {
+      "command": "agents-room",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+`args: ["mcp"]` is required: without a subcommand the binary prints its usage
+and exits.
+
+Hooks, in `~/.claude/settings.json`:
+
+```json
+{
+  "hooks": {
+    "SessionStart": [{ "hooks": [{ "type": "command",
+      "command": "agents-room hook --event=SessionStart --autonomy=1", "timeout": 10 }] }],
+    "SessionEnd": [{ "hooks": [{ "type": "command",
+      "command": "agents-room hook --event=SessionEnd", "timeout": 5 }] }],
+    "Stop": [{ "hooks": [{ "type": "command",
+      "command": "agents-room hook --event=Stop", "timeout": 10 }] }],
+    "PostToolBatch": [{ "hooks": [{ "type": "command",
+      "command": "agents-room hook --event=PostToolBatch", "timeout": 10 }] }]
+  }
+}
+```
+
+Codex, Hermes and any other MCP client are covered in
+[`docs/harness-setup.md`](docs/harness-setup.md), including the two Codex
+caveats that cost time if missed (hook trust, and `cmd.exe` on Windows).
+
+## Commands
 
 | Command | Purpose |
 |---|---|
 | `agents-room` | the command line |
 | `agents-room mcp` | MCP server on stdio, for any harness |
 | `agents-room hook` | one harness hook event |
+| `agents-room doctor` | what is installed and wired up; `--fix` repairs what it can |
 | `agents-room update` | check GitHub for a release; installs only with your yes |
-| `agents-room doctor` | what is installed and wired up |
 | `agents-room migrate-config` | rewrite old command names in harness configs |
-
-## Use
+| `agents-room version` | the version you are running |
+| `agents-room path` | which database is in use |
 
 ```bash
 agents-room join --label "users API" --tag protocol --autonomy 1 --key "$SESSION_ID"
-agents-room join --also shared:storefront          # reach agents in sibling repos
-# or set it once for every session the hook starts:
-#   export AGENTS_ROOM_SHARED=storefront
-agents-room who
-agents-room cap --set 1
-agents-room lease claim --session <id> --path src/api/users.go --ttl 600
-agents-room send  --session <id> --to file:src/api/** --subject "dialect" --body "..."
-agents-room recv  --session <id>
-agents-room watch
+agents-room join --also shared:storefront     # also reach agents in sibling repos
+agents-room who                              # sessions, with liveness
+agents-room cap --set 1                      # cap autonomy for the whole room
+agents-room lease claim --session $ID --path src/wire.go --ttl 600
+agents-room send --session $ID --to file:src/api/** --subject "dialect" --body "..."
+agents-room sent --session $ID               # what became of what you sent
+agents-room recv --session $ID
+agents-room watch                            # live view, polled
 ```
 
-The same operations are MCP tools: `room_join`, `room_leave`, `room_who`,
-`room_leave_room`, `room_set_autonomy_cap`, `msg_send`, `msg_recv`, `msg_ack`,
-`msg_unread`, `msg_sent`, `lease_claim`, `lease_renew`, `lease_release`, `lease_check`,
-`lease_list`, `note_read`, `drift_check`. The full reference is in
-[`docs/protocol.md`](docs/protocol.md).
+The same operations are MCP tools: `room_join`, `room_leave`,
+`room_leave_room`, `room_who`, `room_set_autonomy_cap`, `msg_send`,
+`msg_recv`, `msg_ack`, `msg_unread`, `msg_sent`, `lease_claim`,
+`lease_renew`, `lease_release`, `lease_check`, `lease_list`, `note_read`,
+`drift_check`. The full reference, including selectors and delivery states,
+is in [`docs/protocol.md`](docs/protocol.md).
 
-## Updating
+## Knowing what is real
 
-```bash
-agents-room update --check   # what is the latest release
-agents-room update           # installs after asking
-```
+Two things agents get wrong without help, and agents-room does not.
 
-An update verifies the release signature against the key embedded in the
-binary, then the checksum, and only then replaces the executable. Harness
-configuration is migrated in the same step, because a renamed command left
-in place would make hooks fail silently.
+**A chat that is quiet is not a chat that is gone.** `who` reports `liveness`
+separately from activity: `alive`, `gone`, or `unknown` when the row records
+no pid at all. A chat thinking through a long edit and a chat that exited
+look identical by `last_seen`, and the difference decides whether a file it
+holds is really held. Liveness is decided from the harness key, which
+survives an MCP restart, not from the pid, which does not.
+
+**A message that reached someone who left is not one they ignored.** `sent`
+reports recipients that walked out before reading as `left`, separately from
+those still waiting, so "4 of 7 have not read it" does not stand in for "3 of
+them are gone".
+
+## Doctor
 
 `agents-room doctor` reports the store, the schema version, which harness
 configs are wired up, whether an old command name is still around, a room
@@ -146,33 +268,45 @@ about to lapse, and the sessions whose chat is no longer running.
 `agents-room doctor --fix` applies the repairs it can decide alone, which is
 collapsing a chat that registered more than once. It keeps the session that
 carries the harness key, or the oldest one when none does, and removes the
-rest -- moving any message the removed row still had unread to the session
+rest — moving any message the removed row still had unread to the session
 that survives, because that row was a real member of the room and a delivery
-deleted with it is a message nobody ever read. `--fix --dry-run` prints the
-plan without touching the store. A split room is reported but never merged
-automatically: moving a session between rooms is the session's decision, not
-doctor's.
+deleted with it is a message nobody ever read.
 
-`agents-room who` shows each session's `liveness`: `alive`, `gone`, or
-`unknown` when no pid was recorded. It is not the same as `last_seen`. A chat
-thinking through a long edit and a chat that exited look identical by
-activity, and the difference decides whether a file it holds is really held.
-Liveness is decided from the harness key, which survives an MCP restart,
-rather than from the pid, which does not.
+`--fix --dry-run` prints the plan without touching the store. A split room is
+reported but never merged automatically: moving a session between rooms is
+the session's decision, not doctor's.
+
+## Updating
+
+```bash
+agents-room update --check   # is there a newer release
+agents-room update           # installs after asking
+```
+
+An update verifies the release signature against the key embedded in the
+binary, then the checksum, and only then replaces the executable. Harness
+configuration is migrated in the same step, because a renamed command left in
+place would make hooks fail silently.
+
+## Platform notes
+
+Liveness is exact on Linux, the only supported platform with `/proc`. On
+macOS and Windows the pid is all there is, so a chat whose MCP server was
+restarted can read as `gone` while it is working. Nothing is guessed from
+that: a session with no recorded pid is never pruned. On those platforms
+`prune` and `who` take the same fallback, so they still agree with each other.
 
 ## Status
 
-Early. The store, rooms, sessions, messages, leases, drift, the CLI, the MCP
-server, schema migrations and the Claude Code and Hermes wake paths work and
-are tested, including an end-to-end suite that runs the real binaries as
-separate processes. See
-[`docs/plan.md`](docs/plan.md) for milestones and what is still open.
+Early, and honest about it. The store, rooms, sessions, messages, leases,
+drift, the CLI, the MCP server, schema migrations and the Claude Code and
+Hermes wake paths work and are tested, including an end-to-end suite that
+runs the real binaries as separate processes. The Codex adapter follows
+Codex's source contract but has not been run end to end, because Codex is not
+installed on the author's machine.
 
-`make crosscheck` compiles every package and test binary for macOS and
-Windows. It cannot run them, but it catches what Linux hides: a file missing
-its build tag, a test calling something that exists on one platform only.
-Two bugs in 0.5.x failed only on the Windows runner and would have shown up
-here in seconds.
+See [`docs/plan.md`](docs/plan.md) for milestones and
+[`docs/CONTEXT.md`](docs/CONTEXT.md) for what is still open.
 
 ## License
 
