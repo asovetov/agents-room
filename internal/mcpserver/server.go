@@ -428,6 +428,23 @@ func describeSent(sent []hub.Sent) string {
 		if s.Pending > 0 {
 			fmt.Fprintf(&b, "  %d recipient(s) have not read it yet\n", s.Pending)
 		}
+		// Who, not just how many. A broadcast in a shared room reaches every
+		// member, and a count cannot say whether any of them was the agent the
+		// message was about.
+		for _, r := range s.Readers {
+			who := r.Label
+			if who == "" {
+				who = r.SessionID
+			}
+			fmt.Fprintf(&b, "  read by %s", who)
+			if len(r.Rooms) > 0 {
+				fmt.Fprintf(&b, " (%s)", strings.Join(r.Rooms, ", "))
+			}
+			if r.SharedOnly {
+				b.WriteString(" — meets you only in a shared room")
+			}
+			b.WriteString("\n")
+		}
 	}
 	return b.String()
 }

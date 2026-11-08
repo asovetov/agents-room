@@ -327,3 +327,102 @@ func TestRoomCapStillLowersOnRejoin(t *testing.T) {
 		t.Fatalf("autonomy = %d under a notify cap, want %d", s.Autonomy, AutonomyNotify)
 	}
 }
+
+// A tally of readers cannot answer "did the agent I meant read it". In a
+// shared room a broadcast reaches every member, and a bystander's read is
+// indistinguishable from the intended recipient's in a count of three.
+func TestSentNamesTheReaders(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	// The sender and its intended recipient share a repository room.
+	sender, err := h.Join(ctx, JoinOptions{
+		Room: "repo:gcs", ExtraRooms: []string{"shared:s"}, Harness: "test", HarnessKey: "sender",
+	})
+	if err != nil {
+		t.Fatalf("join sender: %v", err)
+	}
+	intended, err := h.Join(ctx, JoinOptions{
+		Room: "repo:fw", ExtraRooms: []string{"shared:s"}, Harness: "test", HarnessKey: "fw",
+	})
+	if err != nil {
+		t.Fatalf("join intended: %v", err)
+	}
+	// A bystander meets the sender only in the shared room.
+	bystander, err := h.Join(ctx, JoinOptions{
+		Room: "repo:other", ExtraRooms: []string{"shared:s"}, Harness: "test", HarnessKey: "other",
+	})
+	if err != nil {
+		t.Fatalf("join bystander: %v", err)
+	}
+
+	m, err := h.Send(ctx, SendOptions{From: sender.ID, To: "*", Subject: "s", Body: "b"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if _, err := h.Recv(ctx, intended.ID, 0); err != nil {
+		t.Fatalf("recv intended: %v", err)
+	}
+	if _, err := h.Recv(ctx, bystander.ID, 0); err != nil {
+		t.Fatalf("recv bystander: %v", err)
+	}
+
+	sent, err := h.SentMessages(ctx, sender.ID, 0)
+	if err != nil {
+		t.Fatalf("sent: %v", err)
+	}
+	if len(sent) != 1 || sent[0].ID != m.ID {
+		t.Fatalf("sent listed %d messages, want the one", len(sent))
+	}
+	if got := len(sent[0].Readers); got != 2 {
+		t.Fatalf("readers = %d, want both who read it", got)
+	}
+	byID := map[string]Reader{}
+	for _, r := range sent[0].Readers {
+		byID[r.SessionID] = r
+	}
+	if _, ok := byID[intended.ID]; !ok {
+		t.Fatal("the intended recipient is missing from the readers")
+	}
+	// The bystander and the intended recipient share the same room set, so
+	// both read as shared-only: the store cannot tell them apart, and saying
+	// otherwise would be a guess.
+	if !byID[bystander.ID].SharedOnly || !byID[intended.ID].SharedOnly {
+		t.Fatalf("shared-only = %v/%v, want both true",
+			byID[intended.ID].SharedOnly, byID[bystander.ID].SharedOnly)
+	}
+	if got := byID[intended.ID].Rooms; len(got) != 1 || got[0] != "shared:s" {
+		t.Fatalf("rooms = %v, want the shared room they meet in", got)
+	}
+}
+
+// A sender that shares a repository room with the reader is not told it is a
+// stranger: SharedOnly is a hint about the meeting place, not a verdict.
+func TestSentReaderInACommonRepositoryRoomIsNotSharedOnly(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "a"})
+	if err != nil {
+		t.Fatalf("join a: %v", err)
+	}
+	b, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "b"})
+	if err != nil {
+		t.Fatalf("join b: %v", err)
+	}
+	if _, err := h.Send(ctx, SendOptions{From: a.ID, To: b.ID, Subject: "s", Body: "b"}); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if _, err := h.Recv(ctx, b.ID, 0); err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+	sent, err := h.SentMessages(ctx, a.ID, 0)
+	if err != nil {
+		t.Fatalf("sent: %v", err)
+	}
+	if len(sent[0].Readers) != 1 {
+		t.Fatalf("readers = %d, want 1", len(sent[0].Readers))
+	}
+	if sent[0].Readers[0].SharedOnly {
+		t.Fatal("a reader in a common repository room was reported as shared-only")
+	}
+}

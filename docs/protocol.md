@@ -172,6 +172,19 @@ it. `msg_sent` (and `agents-room sent`) lists what a session sent with a
 per-state tally and a `pending` count, so a sender can tell a slow reader from
 a message nobody ever picked up.
 
+A tally is also not the same as knowing **who** read it. A broadcast into a
+shared room reaches every member, including the ones the message had nothing
+to do with, and their read is indistinguishable from the intended recipient's
+in a count. `readers` names each one with the rooms it shares with the sender,
+so a sender can see that a message about a link budget was read by three
+sessions and none of them the firmware agent it was meant for.
+
+`shared_only` marks a reader whose only room in common with the sender is a
+shared room. It is a hint, not a verdict: in the cross-repository case that is
+the normal shape, and two agents working on the same interface still meet only
+there. The store reports the shape; only the sender knows whether the reader
+was a bystander, and guessing would be the one thing this tool does not do.
+
 A recipient that leaves with the message unread is reported separately as
 `left`, not as pending. Its delivery is deleted with the session, so counting
 only the rows on disk would say "still waiting" about a session that no
@@ -344,7 +357,7 @@ for it. Re-read before editing.
 | `msg_recv` | `session_id`, `limit?` | messages, marked read; `inbox` when empty |
 | `msg_ack` | `session_id`, `message_id` | nothing |
 | `msg_unread` | `session_id` | `count` |
-| `msg_sent` | `session_id`, `limit?` | `messages`: each with `states`, `pending`, `left`, `sent` |
+| `msg_sent` | `session_id`, `limit?` | `messages`: each with `states`, `pending`, `left`, `sent`, `readers` |
 | `room_history` | `session_id?`, `room?`, `limit?` | `room`, `messages` (read-only) |
 | `lease_claim` | `session_id`, `path`, `ttl_s?`, `mode?` | `ok`, `holder`, `reason` |
 | `lease_renew` | `session_id`, `path`, `ttl_s?` | the renewed lease |

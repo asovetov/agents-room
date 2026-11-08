@@ -423,6 +423,19 @@ func runSent(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		if s.Left > 0 {
 			fmt.Fprintf(stdout, "  %d recipient(s) left the room before reading it\n", s.Left)
 		}
+		// Who read it, not just how many. In a shared room a broadcast reaches
+		// everyone, and "2 read it" says nothing about whether either of them
+		// was the agent the message was about.
+		for _, r := range s.Readers {
+			fmt.Fprintf(stdout, "  read by %s", readerName(r))
+			if len(r.Rooms) > 0 {
+				fmt.Fprintf(stdout, " (%s)", strings.Join(r.Rooms, ", "))
+			}
+			if r.SharedOnly {
+				fmt.Fprintf(stdout, " — meets you only in a shared room")
+			}
+			fmt.Fprintln(stdout)
+		}
 	}
 	return 0
 }
@@ -441,6 +454,15 @@ func autonomySet(args []string) bool {
 		}
 	}
 	return false
+}
+
+// readerName is what a human calls a reader: its label when it has one, its
+// id otherwise.
+func readerName(r hub.Reader) string {
+	if r.Label != "" {
+		return r.Label
+	}
+	return r.SessionID
 }
 
 // describeInbox turns an empty recv into an answer the reader can act on: the

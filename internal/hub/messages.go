@@ -506,6 +506,36 @@ type Sent struct {
 	// event. Recipients counts the deliveries still on disk, and a session
 	// that leaves takes its delivery with it, so Sent == Recipients + Left.
 	Sent int `json:"sent"`
+	// Readers names the recipients that fetched the body, with what is known
+	// about each.
+	//
+	// A count alone cannot answer "did the agent I meant read it". In a
+	// shared room a broadcast reaches every member, including the ones the
+	// message had nothing to do with, and their read is indistinguishable
+	// from the intended recipient's in a tally of three. A sender chasing a
+	// decision needs the names, and needs to know which of them are the
+	// people the message was about.
+	Readers []Reader `json:"readers,omitempty"`
+}
+
+// Reader is one session that fetched a message, and the little that can be
+// said about whether it was the right one.
+type Reader struct {
+	SessionID string `json:"session_id"`
+	Label     string `json:"label,omitempty"`
+	Harness   string `json:"harness,omitempty"`
+	// Rooms are the rooms the reader shares with the sender, which is how
+	// the message reached it at all.
+	Rooms []string `json:"rooms,omitempty"`
+	// SharedOnly is true when the only room the two share is a shared room.
+	//
+	// That is a hint, not a verdict: in a cross-repository room it is the
+	// normal case, and two agents that work on the same interface still meet
+	// only there. It is reported because a reader with no repository room in
+	// common and no matching tag is the shape of a bystander, and the sender
+	// is the only one who can say whether it was.
+	SharedOnly bool  `json:"shared_only,omitempty"`
+	ReadAt     int64 `json:"read_at,omitempty"`
 }
 
 // SentMessages lists what a session sent, newest first, with delivery states.
@@ -567,8 +597,106 @@ func (h *Hub) SentMessages(ctx context.Context, sessionID string, limit int) ([]
 		} else {
 			out[i].Sent = out[i].Recipients
 		}
+		readers, err := h.readersOf(ctx, sessionID, out[i].ID)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Readers = readers
 	}
 	return out, nil
+}
+
+// readersOf names the sessions that fetched a message, relative to its
+// sender.
+//
+// The rooms listed are the ones the reader shares with the sender, because
+// that is how the message could reach it. SharedOnly says the two meet only
+// in a shared room: in a cross-repository room that is normal and often
+// exactly right, so it is a hint for the sender to judge, not a label the
+// store is entitled to apply.
+func (h *Hub) readersOf(ctx context.Context, senderID, messageID string) ([]Reader, error) {
+	// Names, not ids: SharedOnly is a judgement about what kind of room the
+	// two meet in, and only the name carries that. Membership ids are opaque
+	// hex, so a prefix check on them would never match.
+	senderRooms, err := h.RoomsOf(ctx, senderID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := h.db.SQL().QueryContext(ctx, `
+		SELECT d.session_id, COALESCE(s.label, ''), COALESCE(s.harness, ''), d.updated_at
+		FROM deliveries d
+		LEFT JOIN sessions s ON s.id = d.session_id
+		WHERE d.message_id = ? AND d.state IN (?, ?)
+		ORDER BY d.updated_at ASC, d.session_id ASC`,
+		messageID, StateRead, StateAcked)
+	if err != nil {
+		return nil, fmt.Errorf("readers: %w", err)
+	}
+	defer rows.Close()
+
+	type row struct {
+		id, label, harness string
+		at                 int64
+	}
+	var found []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.label, &r.harness, &r.at); err != nil {
+			return nil, fmt.Errorf("readers: scan: %w", err)
+		}
+		found = append(found, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("readers: rows: %w", err)
+	}
+
+	out := []Reader{}
+	for _, r := range found {
+		readerRooms, err := h.RoomsOf(ctx, r.id)
+		if err != nil {
+			// A reader that left after reading has no memberships left; its
+			// delivery survives, so name it without rooms rather than failing
+			// the whole listing.
+			if !errors.Is(err, ErrNoSuchSession) {
+				return nil, err
+			}
+			readerRooms = nil
+		}
+		shared := sharedRooms(senderRooms, readerRooms)
+		out = append(out, Reader{
+			SessionID: r.id, Label: r.label, Harness: r.harness,
+			Rooms:      shared,
+			SharedOnly: len(shared) > 0 && !anyRepoRoom(shared),
+			ReadAt:     r.at,
+		})
+	}
+	return out, nil
+}
+
+// sharedRooms returns the rooms two sessions have in common, as names.
+func sharedRooms(a, b []string) []string {
+	inB := make(map[string]bool, len(b))
+	for _, name := range b {
+		inB[name] = true
+	}
+	out := []string{}
+	for _, name := range a {
+		if inB[name] {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// anyRepoRoom reports whether any of the names is a repository room rather
+// than a shared one.
+func anyRepoRoom(rooms []string) bool {
+	for _, name := range rooms {
+		if !strings.HasPrefix(name, "shared:") {
+			return true
+		}
+	}
+	return false
 }
 
 // recipientsAtSend reads the recipient count recorded when a message was
