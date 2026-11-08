@@ -69,7 +69,16 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    (schema version 6). That is what makes a shared room's history complete.
    It also means one message can appear in several rooms' histories, which is
    correct but worth remembering when counting traffic.
-8. Liveness is exact only on Linux, which is the only supported platform with
+8. A session id that names nothing is an error on every read, and the error
+   names the id the caller probably meant. An unknown id and an empty inbox
+   are both zero rows, so without the check the wrong id is invisible: an
+   agent passed its harness key to `msg_recv` for weeks and concluded nothing
+   had been sent to it while nineteen messages piled up. The harness key is
+   the usual mistake, because the harness puts it in the environment and it
+   looks like an identity; it is the join key, not the session id. Tools that
+   resolve a room from a session refuse rather than fall back to the current
+   directory, or a mistyped id writes into the wrong room.
+9. Liveness is exact only on Linux, which is the only supported platform with
    `/proc`. On Windows and macOS the pid, start time and process environment
    are all unavailable without a platform-specific syscall, so liveness falls
    back to "is the pid running" and duplicate rows cannot be tied back to

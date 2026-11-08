@@ -386,3 +386,61 @@ func contentText(t *testing.T, res *mcp.CallToolResult) string {
 	}
 	return b.String()
 }
+
+// A tool call with a session id that names nothing must fail. Answering
+// "0 message(s)" is the same output a real session gets for an empty inbox,
+// so the caller has no way to notice it asked about the wrong id: one agent
+// passed its harness session id for weeks and concluded nothing had been sent
+// to it.
+func TestUnknownSessionIsAToolError(t *testing.T) {
+	cs, h := connect(t)
+	ctx := context.Background()
+	// The harness key is deliberately UUID-shaped: that is the id the harness
+	// puts in the environment, so it is the one a model reaches for by mistake.
+	const key = "2b50133e-aaaa-bbbb-cccc-1234567890ab"
+	joined := call(t, cs, "room_join", map[string]any{
+		"room": "repo:x", "harness": "test", "harness_key": key,
+	})
+	sid, _ := joined["session_id"].(string)
+
+	for _, tool := range []string{"msg_recv", "msg_unread", "msg_sent"} {
+		res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+			Name:      tool,
+			Arguments: map[string]any{"session_id": key},
+		})
+		if err != nil {
+			t.Fatalf("%s: protocol error: %v", tool, err)
+		}
+		if !res.IsError {
+			t.Fatalf("%s with an unknown session id was not an error", tool)
+		}
+		// The text has to carry the id that would have worked, or the model
+		// has to guess which of the two ids it holds is the session one.
+		if body := contentText(t, res); !strings.Contains(body, sid) {
+			t.Fatalf("%s error %q does not name the session id %s", tool, body, sid)
+		}
+	}
+
+	// A real session still gets a normal empty answer.
+	if res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "msg_recv", Arguments: map[string]any{"session_id": sid},
+	}); err != nil || res.IsError {
+		t.Fatalf("msg_recv for a real session: %v, %v", err, res)
+	}
+
+	// A mistyped session id must not write the cap into whatever room the
+	// server happens to be running in.
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name:      "room_set_autonomy_cap",
+		Arguments: map[string]any{"session_id": "deadbeefdeadbeef", "autonomy": 0},
+	})
+	if err != nil {
+		t.Fatalf("room_set_autonomy_cap: protocol error: %v", err)
+	}
+	if !res.IsError {
+		t.Fatal("room_set_autonomy_cap with an unknown session id was not an error")
+	}
+	if cap, _ := h.RoomAutonomyCap(ctx, hub.RepoRoom("")); cap != hub.AutonomyWake {
+		t.Fatalf("the current directory's room cap was changed to %d by a call with a bad id", cap)
+	}
+}

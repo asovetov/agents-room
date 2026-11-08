@@ -299,6 +299,14 @@ reports recipients that walked out before reading as `left`, separately from
 those still waiting, so "4 of 7 have not read it" does not stand in for "3 of
 them are gone".
 
+**An empty inbox and a wrong id are not the same answer.** A session id that
+names nothing is an error, not "no unread messages", and the error names the
+id the caller probably meant. The two ids in play look alike — the harness
+session id that goes into `room_join` as `harness_key`, and the 16-hex session
+id everything else takes — so a model holding both will sometimes pass the
+wrong one, and silence teaches it nothing. One agent did exactly that and
+missed nineteen messages.
+
 ## Doctor
 
 `agents-room doctor` reports the store, the schema version, which harness

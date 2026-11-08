@@ -401,9 +401,16 @@ func (h *Hub) roomNames(ctx context.Context, roomIDs []string) []string {
 // Recv returns the unread messages for a session and marks them read.
 //
 // Expired messages are moved to StateExpired instead of being returned.
+//
+// An unknown session id is an error, not an empty inbox. Both are zero rows,
+// so without the check a caller that passes the wrong id is told "nothing for
+// you" forever and never learns it asked about the wrong thing.
 func (h *Hub) Recv(ctx context.Context, sessionID string, limit int) ([]Message, error) {
 	if limit <= 0 {
 		limit = 50
+	}
+	if err := h.requireSession(ctx, sessionID); err != nil {
+		return nil, fmt.Errorf("recv: %w", err)
 	}
 	now := h.now()
 
@@ -510,6 +517,13 @@ func (h *Hub) SentMessages(ctx context.Context, sessionID string, limit int) ([]
 	if limit <= 0 {
 		limit = 20
 	}
+	// "Nothing sent from this session" is true of a session that sent nothing
+	// and of an id that names nothing. The sender asking this question is
+	// usually chasing a reply that never came, so a wrong id here would send
+	// it looking in the wrong place for the wrong thing.
+	if err := h.requireSession(ctx, sessionID); err != nil {
+		return nil, fmt.Errorf("sent: %w", err)
+	}
 	rows, err := h.db.SQL().QueryContext(ctx, `
 		SELECT id, subject, selector, created_at FROM messages
 		WHERE sender = ? ORDER BY created_at DESC, rowid DESC LIMIT ?`, sessionID, limit)
@@ -603,6 +617,9 @@ func (h *Hub) deliveryStates(ctx context.Context, messageID string) (map[string]
 // Unread counts messages waiting for a session, including expired ones not
 // yet swept. Used by the wake hooks, which must stay cheap.
 func (h *Hub) Unread(ctx context.Context, sessionID string) (int, error) {
+	if err := h.requireSession(ctx, sessionID); err != nil {
+		return 0, fmt.Errorf("unread: %w", err)
+	}
 	var n int
 	err := h.db.SQL().QueryRowContext(ctx, `
 		SELECT COUNT(*) FROM deliveries
@@ -640,6 +657,13 @@ func (h *Hub) Pending(ctx context.Context, sessionID string) (int, error) {
 // that it never re-signals within one turn; a caller that only adds context
 // (a tool event) can pass 0, because it cannot extend a turn.
 func (h *Hub) PendingSince(ctx context.Context, sessionID string, minAge int64) (int, error) {
+	// An unknown id has no pending deliveries, which reads as "nothing to
+	// announce" and silences the hook for a session that does exist under
+	// another id. The check is one indexed lookup, and the hook only reaches
+	// here after resolving the session, so it costs nothing in practice.
+	if err := h.requireSession(ctx, sessionID); err != nil {
+		return 0, fmt.Errorf("pending: %w", err)
+	}
 	cutoff := h.now() - minAge
 	var n int
 	// Only `offered` is retried. `accepted` means the harness took the signal
@@ -660,6 +684,12 @@ func (h *Hub) PendingSince(ctx context.Context, sessionID string, minAge int64) 
 
 // Ack marks a message as confirmed by its recipient.
 func (h *Hub) Ack(ctx context.Context, sessionID, messageID string) error {
+	// Without this the error below says "no delivery of <id> for this
+	// session", which is equally true of a message the caller never received
+	// and of a session id that names nothing. The caller needs to know which.
+	if err := h.requireSession(ctx, sessionID); err != nil {
+		return fmt.Errorf("ack: %w", err)
+	}
 	res, err := h.db.SQL().ExecContext(ctx, `
 		UPDATE deliveries SET state = ?, updated_at = ?
 		WHERE message_id = ? AND session_id = ? AND state <> ?`,

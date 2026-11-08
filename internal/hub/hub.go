@@ -485,12 +485,36 @@ func (h *Hub) Who(ctx context.Context, room string) ([]Session, error) {
 
 // RoomOf returns the session's repository room: the first room it joined.
 // Use RoomsOf for the full list.
+//
+// It returns "" for a session it cannot find, which callers use as "fall back
+// to the current directory's room". A caller that must not guess -- anything
+// that writes, or that reads on behalf of a named session -- uses RoomFor.
 func (h *Hub) RoomOf(ctx context.Context, sessionID string) string {
 	rooms, err := h.RoomsOf(ctx, sessionID)
 	if err != nil || len(rooms) == 0 {
 		return ""
 	}
 	return rooms[0]
+}
+
+// RoomFor is RoomOf for a caller that must not guess.
+//
+// Resolving an unknown session id to the current directory's room is the
+// quiet version of the wrong-id bug: a mistyped id makes `room_who` describe
+// a room the caller is not in, and makes the autonomy cap write itself into
+// the wrong room while reporting success.
+func (h *Hub) RoomFor(ctx context.Context, sessionID string) (string, error) {
+	if err := h.requireSession(ctx, sessionID); err != nil {
+		return "", err
+	}
+	rooms, err := h.RoomsOf(ctx, sessionID)
+	if err != nil {
+		return "", err
+	}
+	if len(rooms) == 0 {
+		return "", h.noSuchSession(ctx, sessionID)
+	}
+	return rooms[0], nil
 }
 
 // RoomsOf returns every room a session belongs to, oldest membership first.
@@ -515,6 +539,99 @@ func (h *Hub) RoomsOf(ctx context.Context, sessionID string) ([]string, error) {
 		out = append(out, name)
 	}
 	return out, rows.Err()
+}
+
+// ErrNoSuchSession is returned when a caller names a session id that does not
+// exist.
+//
+// It exists because the quiet alternative is a lie. A read for an unknown id
+// returns no rows, which is indistinguishable from an empty inbox: one agent
+// called msg_recv with its harness session id instead of its room session id,
+// was told "no unread messages" every time, and spent weeks believing nothing
+// had been sent to it while nineteen messages piled up in the room.
+var ErrNoSuchSession = errors.New("no such session")
+
+// requireSession fails with ErrNoSuchSession when the id names nothing.
+//
+// Reads use it because they have no other way to tell an empty inbox from a
+// mistyped id: both are zero rows. Writes mostly fail on their own -- an ack
+// with no matching delivery already errors -- but the message they produce
+// says "not found", which does not tell the caller what to fix.
+func (h *Hub) requireSession(ctx context.Context, sessionID string) error {
+	if sessionID == "" {
+		return fmt.Errorf("%w: the session id is empty; room_join returns the one to use",
+			ErrNoSuchSession)
+	}
+	var id string
+	err := h.db.SQL().QueryRowContext(ctx,
+		`SELECT id FROM sessions WHERE id = ?`, sessionID).Scan(&id)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("look up session: %w", err)
+	}
+	return h.noSuchSession(ctx, sessionID)
+}
+
+// noSuchSession explains a missing session in terms of what the caller can do
+// about it: name the session it probably meant, and say which of the two ids
+// in play is which.
+func (h *Hub) noSuchSession(ctx context.Context, sessionID string) error {
+	base := fmt.Errorf("%w %q", ErrNoSuchSession, sessionID)
+	if hint := h.sessionHint(ctx, sessionID); hint != "" {
+		return fmt.Errorf("%w; %s", base, hint)
+	}
+	if isRoomSessionID(sessionID) {
+		// The right shape, but nothing is stored under it. A session that left
+		// is deleted with its deliveries, so a stale id is the usual reason.
+		return fmt.Errorf("%w; the session may have left the room already, "+
+			"or the id may belong to a different store", base)
+	}
+	// The wrong shape entirely. Say what the right one looks like, because the
+	// caller has to choose between two ids it already holds and nothing in
+	// either of them says which is which.
+	return fmt.Errorf("%w; room session ids are the 16-hex value room_join "+
+		"returned, not the harness session id (CLAUDE_CODE_SESSION_ID and its "+
+		"equivalents, which room_join takes as harness_key)", base)
+}
+
+// sessionHint names the session a wrong id probably meant, so the caller can
+// repair the call instead of giving up on the room.
+func (h *Hub) sessionHint(ctx context.Context, sessionID string) string {
+	// The harness key is the most common wrong id, because the harness itself
+	// puts it in the environment and it looks exactly like an identity. It is
+	// the join key, not the session id, so an exact match here is unambiguous.
+	var id string
+	if err := h.db.SQL().QueryRowContext(ctx,
+		`SELECT id FROM sessions WHERE harness_key = ?`, sessionID).Scan(&id); err == nil {
+		return fmt.Sprintf("that is the harness key of session %s; every tool takes "+
+			"the session id, so call again with %s", id, id)
+	}
+	// A truncated id, or the short label room_who shows.
+	err := h.db.SQL().QueryRowContext(ctx, `
+		SELECT id FROM sessions
+		WHERE id LIKE ? OR harness_key LIKE ? OR label = ?
+		ORDER BY last_seen DESC LIMIT 1`,
+		sessionID+"%", sessionID+"%", sessionID).Scan(&id)
+	if err == nil {
+		return fmt.Sprintf("did you mean session %s?", id)
+	}
+	return ""
+}
+
+// isRoomSessionID reports whether an id has the shape room_join mints: 16
+// lowercase hex characters. A harness key is a UUID and does not.
+func isRoomSessionID(id string) bool {
+	if len(id) != 16 {
+		return false
+	}
+	for _, c := range id {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // sessionRoomIDs returns the room ids a session belongs to, oldest membership
@@ -546,7 +663,10 @@ func (h *Hub) sessionRoomIDs(ctx context.Context, sessionID string) ([]string, e
 		return nil, err
 	}
 	if len(out) == 0 {
-		return nil, store.ErrNotFound
+		// Join always creates at least one membership, so no membership means
+		// no session. Naming it is better than a bare "not found": every caller
+		// of this is about to do something the operator has to retry.
+		return nil, h.noSuchSession(ctx, sessionID)
 	}
 	return out, nil
 }
@@ -718,7 +838,7 @@ func (h *Hub) sessionRoom(ctx context.Context, sessionID string) (string, error)
 	err := h.db.SQL().QueryRowContext(ctx,
 		`SELECT room_id FROM sessions WHERE id = ?`, sessionID).Scan(&roomID)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", store.ErrNotFound
+		return "", h.noSuchSession(ctx, sessionID)
 	}
 	if err != nil {
 		return "", fmt.Errorf("look up session: %w", err)

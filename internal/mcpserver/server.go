@@ -130,12 +130,9 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 			"a room. Lowering it quiets the whole room without touching each session. " +
 			"Sessions already running keep their current level until they rejoin.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in capIn) (*mcp.CallToolResult, capOut, error) {
-		room := in.Room
-		if room == "" && in.SessionID != "" {
-			room = h.RoomOf(ctx, in.SessionID)
-		}
-		if room == "" {
-			room = hub.RepoRoom("")
+		room, err := resolveRoom(ctx, h, in.Room, in.SessionID)
+		if err != nil {
+			return nil, capOut{}, err
 		}
 		cap, err := h.SetRoomAutonomyCap(ctx, room, in.Autonomy)
 		if err != nil {
@@ -173,12 +170,9 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 			"effective autonomy. Use this to find out who else is working here before " +
 			"starting on shared files.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in whoIn) (*mcp.CallToolResult, whoOut, error) {
-		room := in.Room
-		if room == "" && in.SessionID != "" {
-			room = h.RoomOf(ctx, in.SessionID)
-		}
-		if room == "" {
-			room = hub.RepoRoom("")
+		room, err := resolveRoom(ctx, h, in.Room, in.SessionID)
+		if err != nil {
+			return nil, whoOut{}, err
 		}
 		sessions, err := h.Who(ctx, room)
 		if err != nil {
@@ -187,6 +181,24 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 		return text(fmt.Sprintf("%d session(s) in %s", len(sessions), room)),
 			whoOut{Room: room, Sessions: sessions}, nil
 	})
+}
+
+// resolveRoom picks the room a tool should act on: the one named, else the
+// caller's own, else the current directory's.
+//
+// A named session that does not exist is an error rather than a fall-through
+// to the current directory. The fall-through is how a wrong id did the wrong
+// thing quietly: `room_set_autonomy_cap` with a mistyped session id wrote the
+// cap into whatever repository the MCP server happened to be running in and
+// reported success.
+func resolveRoom(ctx context.Context, h *hub.Hub, room, sessionID string) (string, error) {
+	if room != "" {
+		return room, nil
+	}
+	if sessionID != "" {
+		return h.RoomFor(ctx, sessionID)
+	}
+	return hub.RepoRoom(""), nil
 }
 
 type sessionIn struct {
@@ -326,9 +338,9 @@ func registerMessageTools(s *mcp.Server, h *hub.Hub) {
 			"messages addressed to you since you joined, so it says nothing about " +
 			"what the others already agreed. Read-only; it does not mark anything read.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in historyIn) (*mcp.CallToolResult, historyOut, error) {
-		room := in.Room
-		if room == "" && in.SessionID != "" {
-			room = h.RoomOf(ctx, in.SessionID)
+		room, err := resolveRoom(ctx, h, in.Room, in.SessionID)
+		if err != nil {
+			return nil, historyOut{}, err
 		}
 		if room == "" {
 			room = hub.RepoRoom("")

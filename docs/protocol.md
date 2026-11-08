@@ -24,6 +24,20 @@ Override with `AGENTS_ROOM_DB`. There is no daemon.
 `room_join` returns a session id. Every other tool takes it back as an
 explicit handle.
 
+**An unknown session id is an error, not an empty answer.** A read for an id
+that names nothing returns no rows, which is exactly what an empty inbox
+returns; a caller that passed the wrong id cannot tell the two apart. One
+agent called `msg_recv` with its harness session id for weeks, was told
+"no unread messages" every time, and concluded nothing had been sent to it
+while nineteen messages piled up in the room. The error names the id the
+caller probably meant: an exact harness key is resolved to its session, a
+truncated id is matched against session ids and labels, and an id of the right
+shape that names nothing is reported as possibly left or from another store.
+The same check guards `msg_unread`, `msg_sent`, `msg_ack` and every lease and
+drift call, and the room-resolving tools refuse instead of falling back to the
+current directory's room — a mistyped id there used to write an autonomy cap
+into a room the caller is not in and report success.
+
 Passing `harness_key` makes a join idempotent, and an MCP server spawned by a
 harness fills it from the harness session id it inherited
 (`CLAUDE_CODE_SESSION_ID` and its equivalents) when the model omits it. Claude Code fires
