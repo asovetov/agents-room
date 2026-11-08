@@ -1,4 +1,4 @@
-**English:** [Getting started](Getting-started) · **Русский**
+[English](Getting-started) · **Русский**
 
 # Начало работы
 

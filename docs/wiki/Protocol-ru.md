@@ -1,4 +1,4 @@
-**English:** [Protocol](Protocol) · **Русский**
+[English](Protocol) · **Русский**
 
 # Протокол
 

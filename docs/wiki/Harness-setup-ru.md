@@ -1,4 +1,4 @@
-**English:** [Harness setup](Harness-setup) · **Русский**
+[English](Harness-setup) · **Русский**
 
 # Настройка харнесса
 

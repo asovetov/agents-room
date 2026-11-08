@@ -1,4 +1,4 @@
-**English** · **Русский:** [Вики должна оставаться правдивой](Sync-ru)
+**English** · [Русский](Sync-ru)
 
 # Keeping the wiki true
 

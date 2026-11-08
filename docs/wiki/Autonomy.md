@@ -1,4 +1,4 @@
-**English** · **Русский:** [Автономия](Autonomy-ru)
+**English** · [Русский](Autonomy-ru)
 
 # Autonomy
 

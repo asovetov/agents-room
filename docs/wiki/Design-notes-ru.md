@@ -1,4 +1,4 @@
-**English:** [Design notes](Design-notes) · **Русский**
+[English](Design-notes) · **Русский**
 
 # Заметки о решениях
 

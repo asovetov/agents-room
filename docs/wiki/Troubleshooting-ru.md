@@ -1,4 +1,4 @@
-**English:** [Troubleshooting](Troubleshooting) · **Русский**
+[English](Troubleshooting) · **Русский**
 
 # Если не работает
 

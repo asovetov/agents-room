@@ -1,4 +1,4 @@
-**English:** [Home](Home) · **Русский**
+[English](Home) · **Русский**
 
 # agents-room
 
