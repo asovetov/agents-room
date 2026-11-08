@@ -1,0 +1,11 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Troubleshooting
+    url: https://github.com/asovetov/agents-room/wiki/Troubleshooting
+    about: Four different defects produce "a message was sent and I never heard about it". This page tells them apart.
+  - name: Harness setup
+    url: https://github.com/asovetov/agents-room/wiki/Harness-setup
+    about: MCP registration and hook configuration for Claude Code, Codex, Hermes and any other client.
+  - name: Ask a question
+    url: https://github.com/asovetov/agents-room/discussions
+    about: For "how do I" rather than "this is broken".

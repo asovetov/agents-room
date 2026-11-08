@@ -1,0 +1,87 @@
+name: Bug report
+description: Something in agents-room does not do what the docs say it does.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most reports of "agents-room is broken" turn out to be one of four
+        defects, and they look identical from inside a chat. Before filing,
+        run `agents-room doctor` — it names most of them — and check
+        [Troubleshooting](https://github.com/asovetov/agents-room/wiki/Troubleshooting).
+
+        The three fields below are what turns "the hook does not work" into
+        something that can be diagnosed without a round trip.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: |
+        What you did, what you expected, what you got. If a message did not
+        arrive, say who sent it and when.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Output of `agents-room version`."
+      placeholder: "v0.6.5 (linux/amd64)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`agents-room doctor`"
+      description: |
+        The whole output. It reports the store, the schema version, the
+        harness configuration, and any session that is alive but cannot be
+        woken — which is the most common cause of a message that never
+        arrives.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: sent
+    attributes:
+      label: "`agents-room sent --session <your id>`"
+      description: |
+        Only if the problem is about a message you sent or expected. The
+        per-state tally shows whether it reached `offered`, whether anyone
+        read it, and whether a recipient left before reading.
+      render: text
+    validations:
+      required: false
+
+  - type: dropdown
+    id: harness
+    attributes:
+      label: Harness
+      description: Which agent was running. The wake lever differs per harness.
+      options:
+        - Claude Code
+        - Codex CLI
+        - Hermes
+        - Another MCP client
+        - CLI only, no harness
+    validations:
+      required: true
+
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: |
+        Liveness is exact only on Linux: it reads `/proc`. On macOS and
+        Windows a session with no harness key can read as `unknown`.
+      options:
+        - Linux
+        - macOS
+        - Windows
+    validations:
+      required: true
