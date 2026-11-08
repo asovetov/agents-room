@@ -1,3 +1,5 @@
+**English** · **Русский:** [Заметки о решениях](Design-notes-ru)
+
 # Design notes
 
 Read this first. It records what is decided, what is open, and where to start.
@@ -20,11 +22,11 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
 
 ## Read in this order
 
-1. [`../README.md`](../README.md): the problem and the shape of the answer.
-2. [`plan.md`](plan.md): scope, architecture, milestones, open questions.
-3. [`protocol.md`](protocol.md): data model, selectors, delivery states, tools.
-4. [`harness-setup.md`](harness-setup.md): per-harness installation.
-5. [`history/`](history/): the original Russian drafts, for provenance only.
+1. [`README.md`](https://github.com/asovetov/agents-room/blob/main/README.md): the problem and the shape of the answer.
+2. [`plan.md`](https://github.com/asovetov/agents-room/blob/main/docs/plan.md): scope, architecture, milestones, open questions.
+3. [`protocol.md`](https://github.com/asovetov/agents-room/blob/main/docs/protocol.md): data model, selectors, delivery states, tools.
+4. [`harness-setup.md`](https://github.com/asovetov/agents-room/blob/main/docs/harness-setup.md): per-harness installation.
+5. [`history/`](https://github.com/asovetov/agents-room/tree/main/docs/history): the original Russian drafts, for provenance only.
 
 ## Decided
 

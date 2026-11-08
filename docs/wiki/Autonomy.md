@@ -1,3 +1,5 @@
+**English** · **Русский:** [Автономия](Autonomy-ru)
+
 # Autonomy
 
 Autonomy decides whether a wake signal may interrupt the agent. It is the

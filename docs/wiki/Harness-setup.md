@@ -1,3 +1,5 @@
+**English** · **Русский:** [Настройка харнесса](Harness-setup-ru)
+
 # Harness setup
 
 agents-room speaks MCP, so any MCP client can use the tools. Wake signals

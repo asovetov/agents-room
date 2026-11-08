@@ -6,28 +6,50 @@ anything else.
 
 ## Publishing
 
-GitHub creates the wiki repository only after the first page is made through
-the web interface. Once that exists, publishing is one push:
-
 ```bash
 git clone https://github.com/asovetov/agents-room.wiki.git /tmp/arwiki
 cp docs/wiki/*.md /tmp/arwiki/
+rm /tmp/arwiki/README.md          # a wiki page called README would compete with Home
 cd /tmp/arwiki && git add -A && git commit -m "update wiki" && git push
 ```
 
-The file names are the page names: `Home.md` is the landing page, and the
-others are reachable as `/wiki/Protocol`, `/wiki/Troubleshooting` and so on.
-Rename a file and every `[link](Page-Name)` pointing at it breaks, so keep
-the names.
+The file names are the page names. `Home.md` is the landing page, and
+`_Sidebar.md` and `_Footer.md` are injected into every page by GitHub rather
+than being pages of their own. Rename a file and every `[link](Page-Name)`
+pointing at it breaks, so keep the names.
+
+## Two languages
+
+The English page is the original; the Russian one is its translation, named
+after it with a `-ru` suffix: `Protocol` and `Protocol-ru`. The first line of
+every page is the switcher, so a reader who lands on the wrong language can
+get to the other one.
+
+| English | Русский |
+|---|---|
+| `Home` | `Home-ru` |
+| `Getting-started` | `Getting-started-ru` |
+| `Harness-setup` | `Harness-setup-ru` |
+| `Protocol` | `Protocol-ru` |
+| `Autonomy` | `Autonomy-ru` |
+| `Troubleshooting` | `Troubleshooting-ru` |
+| `Design-notes` | `Design-notes-ru` |
+| `Sync` | `Sync-ru` |
+
+Edit both versions in the same commit. A translation that lags is worse than
+no translation: it is a second answer, and the stale one. If you cannot keep
+a claim current in one language, remove it from both.
+
+Links between wiki pages are bare page names (`[Protocol](Protocol-ru)`);
+links to repository files must be full GitHub URLs, because a wiki page has
+no filesystem next to it.
 
 ## Keeping it true
 
 The wiki must not drift from the code. Every claim here is also in `docs/` or
 the README; when a behaviour changes, change both in the same commit.
 
-- `Harness-setup.md` is a copy of [`../harness-setup.md`](../harness-setup.md).
-- `Design-notes.md` is a copy of [`../CONTEXT.md`](../CONTEXT.md).
+- `Harness-setup*.md` mirror [`../harness-setup.md`](../harness-setup.md).
+- `Design-notes*.md` mirror [`../CONTEXT.md`](../CONTEXT.md).
+- `Protocol*.md` mirror [`../protocol.md`](../protocol.md).
 - The rest are written for the wiki and have no counterpart.
-
-The README is excluded from the published set: a wiki page called README
-would compete with Home as the landing page.

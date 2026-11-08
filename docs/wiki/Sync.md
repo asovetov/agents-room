@@ -1,3 +1,5 @@
+**English** · **Русский:** [Вики должна оставаться правдивой](Sync-ru)
+
 # Keeping the wiki true
 
 The wiki is a view of the code, not a second source of truth. Every claim on

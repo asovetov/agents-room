@@ -1,3 +1,5 @@
+**English** · **Русский:** [Если не работает](Troubleshooting-ru)
+
 # Troubleshooting
 
 Most reports of "agents-room is broken" turn out to be one of a few defects,
