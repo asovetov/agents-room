@@ -354,7 +354,14 @@ func runRecv(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		return writeJSON(stdout, stderr, msgs)
 	}
 	if len(msgs) == 0 {
-		fmt.Fprintln(stdout, "no unread messages")
+		// "no unread messages" alone cannot be told from "you are looking in
+		// the wrong place", and an agent that suspects the second has no way
+		// to check short of reading the database.
+		inbox, err := h.Inbox(ctx, *session)
+		if err != nil {
+			return fail(stderr, err)
+		}
+		fmt.Fprintln(stdout, describeInbox(inbox))
 		return 0
 	}
 	for _, m := range msgs {
@@ -411,6 +418,28 @@ func runSent(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// describeInbox turns an empty recv into an answer the reader can act on: the
+// rooms the session is in, and whether anything has ever reached it.
+func describeInbox(inbox *hub.InboxSummary) string {
+	var b strings.Builder
+	b.WriteString("no unread messages")
+	if len(inbox.Rooms) > 0 {
+		fmt.Fprintf(&b, "; this session is in %s", strings.Join(inbox.Rooms, ", "))
+	}
+	switch {
+	case inbox.Delivered == 0:
+		b.WriteString(". Nothing has ever been sent to it: if you expected a " +
+			"message, check that the sender and you share a room")
+	case inbox.Read == inbox.Delivered:
+		fmt.Fprintf(&b, ". %d message(s) were delivered and all of them read",
+			inbox.Delivered)
+	default:
+		fmt.Fprintf(&b, ". %d of %d delivered message(s) have been read",
+			inbox.Read, inbox.Delivered)
+	}
+	return b.String()
 }
 
 // livenessWord renders a session's liveness for the who table. "unknown" is

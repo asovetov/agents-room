@@ -11,14 +11,43 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/asovetov/agents-room/internal/hub"
 )
 
 // Nudge is the one line a harness sees.
-func Nudge(room string, n int) string {
-	return fmt.Sprintf("[agents-room] %d unread in room %q; call msg_recv", n, room)
+//
+// It names every room the unread messages came through, not just the first
+// one. A session joined its repository room first and its shared rooms after,
+// so naming only the first told an agent in `repo:storefront-web` that its
+// message was in `repo:storefront-web` when it had arrived in
+// `shared:storefront` -- the agent then looked in a room that had nothing new.
+// The line stays one line: past two rooms it says how many more there are
+// rather than growing without bound.
+func Nudge(rooms []string, n int) string {
+	if len(rooms) == 0 {
+		return fmt.Sprintf("[agents-room] %d unread; call msg_recv", n)
+	}
+	named := rooms
+	more := 0
+	if len(named) > 2 {
+		more = len(named) - 2
+		named = named[:2]
+	}
+	quoted := make([]string, len(named))
+	for i, r := range named {
+		quoted[i] = strconv.Quote(r)
+	}
+	where := "room " + strings.Join(quoted, ", ")
+	if len(named) > 1 {
+		where = "rooms " + strings.Join(quoted, ", ")
+	}
+	if more > 0 {
+		where += fmt.Sprintf(" and %d more", more)
+	}
+	return fmt.Sprintf("[agents-room] %d unread in %s; call msg_recv", n, where)
 }
 
 // Result describes what happened, so a hook can decide its exit code.
@@ -72,11 +101,14 @@ func check(ctx context.Context, h *hub.Hub, sessionID string, minAge int64) (Res
 	if err != nil {
 		return Result{}, err
 	}
-	room := h.RoomOf(ctx, sessionID)
+	rooms, err := h.UnreadRooms(ctx, sessionID)
+	if err != nil {
+		return Result{}, err
+	}
 	if err := h.Touch(ctx, sessionID); err != nil {
 		return Result{}, err
 	}
-	return Result{Unread: n, Line: Nudge(room, n)}, nil
+	return Result{Unread: n, Line: Nudge(rooms, n)}, nil
 }
 
 // SocketPath returns the Claude Code inbox socket for this process, if any.

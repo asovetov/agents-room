@@ -631,6 +631,95 @@ func (h *Hub) Unread(ctx context.Context, sessionID string) (int, error) {
 	return n, nil
 }
 
+// UnreadRooms names the rooms a session's unread messages are in, the busiest
+// first.
+//
+// A nudge has to name the room the message actually came through. The room a
+// session joined first is its repository room, and it is almost never the one
+// a cross-repository message arrives in: a link in `repo:storefront-web` that
+// meets the firmware in `shared:storefront` was told "1 unread in room
+// repo:storefront-web" and went looking in the wrong place.
+//
+// The room list is intersected with the recipient's own membership, because a
+// message is filed under every room its *sender* was in, and naming a room the
+// reader is not a member of would be a different wrong answer.
+func (h *Hub) UnreadRooms(ctx context.Context, sessionID string) ([]string, error) {
+	if err := h.requireSession(ctx, sessionID); err != nil {
+		return nil, fmt.Errorf("unread rooms: %w", err)
+	}
+	rows, err := h.db.SQL().QueryContext(ctx, `
+		SELECT r.name, COUNT(*) AS n
+		FROM deliveries d
+		JOIN message_rooms mr ON mr.message_id = d.message_id
+		JOIN rooms r ON r.id = mr.room_id
+		JOIN session_rooms sr ON sr.room_id = mr.room_id AND sr.session_id = d.session_id
+		WHERE d.session_id = ? AND d.state IN (?, ?, ?)
+		GROUP BY r.name
+		ORDER BY n DESC, r.name ASC`,
+		sessionID, StateStored, StateOffered, StateAccepted)
+	if err != nil {
+		return nil, fmt.Errorf("unread rooms: %w", err)
+	}
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var name string
+		var n int
+		if err := rows.Scan(&name, &n); err != nil {
+			return nil, fmt.Errorf("unread rooms: scan: %w", err)
+		}
+		out = append(out, name)
+	}
+	return out, rows.Err()
+}
+
+// InboxSummary answers "is this inbox empty, or am I asking in the wrong
+// place" for a session that just fetched nothing.
+//
+// An empty Recv is correct and uninformative: it says no message is waiting,
+// which is also what a session in the wrong room would see. An agent that
+// suspected it had written to the wrong room had to read the database by hand
+// to check, because nothing in the tool's answer said which rooms it was in or
+// whether anything had ever been delivered to it.
+type InboxSummary struct {
+	// Rooms is every room the session is in, oldest membership first.
+	Rooms []string `json:"rooms"`
+	// Delivered is how many deliveries this session has ever had, in any
+	// state. Zero means nothing was ever addressed to it, which is the
+	// answer "you may be in the wrong room" needs.
+	Delivered int `json:"delivered"`
+	// LastDeliveredAt is when the most recent delivery was created, in unix
+	// seconds. Zero when Delivered is zero.
+	LastDeliveredAt int64 `json:"last_delivered_at,omitempty"`
+	// Read is how many of them this session has read, so "I have received
+	// nothing" and "I have received things and read them" stay distinct.
+	Read int `json:"read"`
+}
+
+// Inbox summarizes what a session has been sent and where it can be reached.
+func (h *Hub) Inbox(ctx context.Context, sessionID string) (*InboxSummary, error) {
+	if err := h.requireSession(ctx, sessionID); err != nil {
+		return nil, fmt.Errorf("inbox: %w", err)
+	}
+	rooms, err := h.RoomsOf(ctx, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("inbox: %w", err)
+	}
+	out := &InboxSummary{Rooms: rooms}
+	if err := h.db.SQL().QueryRowContext(ctx, `
+		SELECT COUNT(*), COALESCE(MAX(m.created_at), 0),
+		       COALESCE(SUM(CASE WHEN d.state IN (?, ?) THEN 1 ELSE 0 END), 0)
+		FROM deliveries d
+		JOIN messages m ON m.id = d.message_id
+		WHERE d.session_id = ?`,
+		StateRead, StateAcked, sessionID).Scan(
+		&out.Delivered, &out.LastDeliveredAt, &out.Read); err != nil {
+		return nil, fmt.Errorf("inbox: %w", err)
+	}
+	return out, nil
+}
+
 // Pending counts deliveries no wake signal has been emitted for yet.
 //
 // It is the number a hook may act on. Unread includes rows already offered,

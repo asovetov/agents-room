@@ -69,7 +69,15 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    (schema version 6). That is what makes a shared room's history complete.
    It also means one message can appear in several rooms' histories, which is
    correct but worth remembering when counting traffic.
-8. A session id that names nothing is an error on every read, and the error
+8. A nudge names the rooms its messages came through, and an empty
+   `msg_recv` says why it is empty. Both are the same defect: an answer that
+   is correct but indistinguishable from a different, wrong one. The nudge
+   used to name the session's first room, which for a cross-repository
+   message is almost never where it arrived; `msg_recv` returning nothing
+   used to be the same output for a caught-up session and a session in the
+   wrong room. The rooms named are intersected with the reader's own
+   membership, and past two rooms the line counts the rest.
+9. A session id that names nothing is an error on every read, and the error
    names the id the caller probably meant. An unknown id and an empty inbox
    are both zero rows, so without the check the wrong id is invisible: an
    agent passed its harness key to `msg_recv` for weeks and concluded nothing
@@ -78,7 +86,7 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    looks like an identity; it is the join key, not the session id. Tools that
    resolve a room from a session refuse rather than fall back to the current
    directory, or a mistyped id writes into the wrong room.
-9. Liveness is exact only on Linux, which is the only supported platform with
+10. Liveness is exact only on Linux, which is the only supported platform with
    `/proc`. On Windows and macOS the pid, start time and process environment
    are all unavailable without a platform-specific syscall, so liveness falls
    back to "is the pid running" and duplicate rows cannot be tied back to

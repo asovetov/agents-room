@@ -293,7 +293,17 @@ func registerMessageTools(s *mcp.Server, h *hub.Hub) {
 		if err != nil {
 			return nil, recvOut{}, err
 		}
-		return text(fmt.Sprintf("%d message(s)", len(msgs))), recvOut{Messages: msgs}, nil
+		if len(msgs) > 0 {
+			return text(fmt.Sprintf("%d message(s)", len(msgs))), recvOut{Messages: msgs}, nil
+		}
+		// An empty inbox is the answer most likely to be misunderstood, so it
+		// carries the two facts that disambiguate it: where this session can
+		// be reached, and whether anything has ever reached it.
+		inbox, err := h.Inbox(ctx, in.SessionID)
+		if err != nil {
+			return nil, recvOut{}, err
+		}
+		return text(describeEmptyInbox(inbox)), recvOut{Messages: msgs, Inbox: inbox}, nil
 	})
 
 	mcp.AddTool(s, &mcp.Tool{
@@ -374,6 +384,32 @@ func describeHistory(room string, entries []hub.HistoryEntry) string {
 	return b.String()
 }
 
+// describeEmptyInbox turns "nothing waiting" into an answer a model can act on.
+//
+// The two failure modes it separates: a session that is in the wrong room
+// (nothing was ever addressed to it) and a session that has caught up (it was
+// addressed and read it all). Both are an empty Recv, and only the second one
+// means "nothing more to do".
+func describeEmptyInbox(inbox *hub.InboxSummary) string {
+	var b strings.Builder
+	b.WriteString("no unread messages")
+	if len(inbox.Rooms) > 0 {
+		fmt.Fprintf(&b, "; this session is in %s", strings.Join(inbox.Rooms, ", "))
+	}
+	switch {
+	case inbox.Delivered == 0:
+		b.WriteString(". Nothing has ever been sent to it: if you expected a " +
+			"message, check that the sender and you share a room")
+	case inbox.Read == inbox.Delivered:
+		fmt.Fprintf(&b, ". %d message(s) were delivered and all of them read",
+			inbox.Delivered)
+	default:
+		fmt.Fprintf(&b, ". %d of %d delivered message(s) have been read",
+			inbox.Read, inbox.Delivered)
+	}
+	return b.String()
+}
+
 // describeSent renders the sent list as the few lines a model reads.
 func describeSent(sent []hub.Sent) string {
 	if len(sent) == 0 {
@@ -414,6 +450,10 @@ type recvIn struct {
 
 type recvOut struct {
 	Messages []hub.Message `json:"messages"`
+	// Inbox explains an empty answer: which rooms the session is in and
+	// whether anything was ever delivered to it. Without it "0 message(s)"
+	// cannot be told from "you are looking in the wrong place".
+	Inbox *hub.InboxSummary `json:"inbox,omitempty"`
 }
 
 type ackIn struct {

@@ -137,3 +137,70 @@ func TestRoomForRefusesAnUnknownSession(t *testing.T) {
 		t.Fatalf("RoomFor an unknown session = %v, want ErrNoSuchSession", err)
 	}
 }
+
+// An empty inbox says which rooms the session is in and whether anything was
+// ever delivered to it, so "nothing waiting" can be told from "you are asking
+// in the wrong place". An agent that suspected the second had to read the
+// database by hand to find out.
+func TestInboxExplainsAnEmptyAnswer(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	a := join(t, h, "repo:x", "a")
+	b := join(t, h, "repo:x", "b")
+
+	inbox, err := h.Inbox(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("inbox: %v", err)
+	}
+	if len(inbox.Rooms) != 1 || inbox.Rooms[0] != "repo:x" {
+		t.Fatalf("rooms = %v, want [repo:x]", inbox.Rooms)
+	}
+	if inbox.Delivered != 0 {
+		t.Fatalf("delivered = %d for a session nobody wrote to, want 0", inbox.Delivered)
+	}
+
+	m, err := h.Send(ctx, SendOptions{From: b.ID, To: a.ID, Subject: "s", Body: "b"})
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if _, err := h.Recv(ctx, a.ID, 0); err != nil {
+		t.Fatalf("recv: %v", err)
+	}
+
+	inbox, err = h.Inbox(ctx, a.ID)
+	if err != nil {
+		t.Fatalf("inbox after reading: %v", err)
+	}
+	if inbox.Delivered != 1 || inbox.Read != 1 {
+		t.Fatalf("inbox = %d delivered, %d read; want 1 and 1", inbox.Delivered, inbox.Read)
+	}
+	if inbox.LastDeliveredAt == 0 {
+		t.Fatal("last delivery time was not recorded")
+	}
+	_ = m
+}
+
+// The rooms listed are the reader's own, oldest membership first.
+func TestInboxListsEveryRoomOfTheSession(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	s, err := h.Join(ctx, JoinOptions{
+		Room: "repo:a", ExtraRooms: []string{"shared:s"}, Harness: "test", HarnessKey: "a",
+	})
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	inbox, err := h.Inbox(ctx, s.ID)
+	if err != nil {
+		t.Fatalf("inbox: %v", err)
+	}
+	want := []string{"repo:a", "shared:s"}
+	if len(inbox.Rooms) != len(want) {
+		t.Fatalf("rooms = %v, want %v", inbox.Rooms, want)
+	}
+	for i := range want {
+		if inbox.Rooms[i] != want[i] {
+			t.Fatalf("rooms = %v, want %v", inbox.Rooms, want)
+		}
+	}
+}

@@ -29,12 +29,43 @@ func shortSocketDir(t *testing.T) string {
 }
 
 func TestNudgeLineCarriesNoBody(t *testing.T) {
-	line := Nudge("repo:gcs", 3)
+	line := Nudge([]string{"repo:gcs"}, 3)
 	if !strings.Contains(line, "3 unread") || !strings.Contains(line, "repo:gcs") {
 		t.Fatalf("nudge = %q", line)
 	}
 	if !strings.Contains(line, "msg_recv") {
 		t.Fatalf("nudge %q does not tell the agent how to fetch", line)
+	}
+}
+
+// The nudge names the room the message came through. Naming the session's
+// first room instead sent a link agent to its own repository room while the
+// message sat in a shared one.
+func TestNudgeNamesEveryRoom(t *testing.T) {
+	line := Nudge([]string{"shared:storefront", "repo:storefront-web"}, 2)
+	if !strings.Contains(line, "shared:storefront") {
+		t.Fatalf("nudge %q does not name the shared room the message came through", line)
+	}
+	if !strings.Contains(line, "repo:storefront-web") {
+		t.Fatalf("nudge %q does not name the repository room", line)
+	}
+	if !strings.Contains(line, "rooms ") {
+		t.Fatalf("nudge %q names two rooms but does not say so", line)
+	}
+
+	// The line stays one line: past two rooms it counts the rest.
+	many := Nudge([]string{"a", "b", "c", "d"}, 4)
+	if strings.Count(many, "\n") != 0 {
+		t.Fatalf("nudge %q is not one line", many)
+	}
+	if !strings.Contains(many, "2 more") {
+		t.Fatalf("nudge %q does not say how many rooms it left out", many)
+	}
+
+	// A delivery whose rooms are all gone still has to produce a usable line.
+	if bare := Nudge(nil, 1); !strings.Contains(bare, "1 unread") ||
+		!strings.Contains(bare, "msg_recv") {
+		t.Fatalf("nudge without a room = %q", bare)
 	}
 }
 
@@ -341,5 +372,58 @@ func TestCheckRetryNeverRepeatsAnAcceptedDelivery(t *testing.T) {
 	}
 	if res.Line != "" {
 		t.Fatalf("re-signalled an accepted delivery: %+v", res)
+	}
+}
+
+// The nudge names the room the message came through, not the room the
+// session happened to join first.
+//
+// A link in repo:storefront-web met the firmware in shared:storefront. The
+// message was filed under both, but the nudge said "1 unread in room
+// repo:storefront-web" because that was the session's oldest membership, and
+// the agent went looking in a room that had nothing new.
+func TestCheckNamesTheRoomTheMessageCameThrough(t *testing.T) {
+	ctx := context.Background()
+	h, err := hub.OpenPath(filepath.Join(t.TempDir(), "room.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	link, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:storefront-web", ExtraRooms: []string{"shared:storefront"},
+		Harness: "test", HarnessKey: "link",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fw, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:storefront-mobile", ExtraRooms: []string{"shared:storefront"},
+		Harness: "test", HarnessKey: "fw",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The firmware writes from its own repository room; the message belongs to
+	// every room it is in, which is how the link can see it at all.
+	if _, err := h.Send(ctx, hub.SendOptions{
+		From: fw.ID, To: link.ID, Subject: "s", Body: "b",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := Check(ctx, h, link.ID)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if !strings.Contains(res.Line, "shared:storefront") {
+		t.Fatalf("nudge %q does not name the shared room the message came through", res.Line)
+	}
+
+	// A room the reader is not a member of is never named: it is not where the
+	// reader can go and read anything.
+	if strings.Contains(res.Line, "repo:storefront-mobile") {
+		t.Fatalf("nudge %q names a room the reader is not in", res.Line)
 	}
 }

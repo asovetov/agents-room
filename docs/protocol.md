@@ -199,6 +199,20 @@ otherwise would make the delivery states lie.
 the count and the latest subject, so the joining agent knows to call
 `room_history` instead of trusting `msg_recv`'s silence.
 
+### An empty inbox says why it is empty
+
+`msg_recv` returning nothing is correct and, on its own, uninformative: it is
+the same answer for a session that has caught up and for one that is in the
+wrong room. So the empty answer carries an `inbox` block — the rooms the
+session is in, how many deliveries it has ever had, how many it has read, and
+when the last one was created.
+
+That turns the two cases into different sentences: nothing has ever been sent
+to this session (check that the sender and you share a room), or N messages
+were delivered and all of them read (there is nothing more to do). An agent
+that suspected it had written to the wrong room previously had to read the
+database by hand to find out; `agents-room recv` prints the same summary.
+
 ### A signal is retried, but never twice inside one turn
 
 There is no `offered -> stored` transition, so a delivery that was offered
@@ -262,8 +276,18 @@ a message waits for `msg_recv`.
 A wake signal never carries the body. It carries one line:
 
 ```
-[agents-room] 2 unread in room "repo:gcs"; call msg_recv
+[agents-room] 2 unread in rooms "shared:storefront", "repo:storefront-web"; call msg_recv
 ```
+
+The rooms named are the ones the unread messages **came through**, not the
+session's first room. A session joins its repository room first and its shared
+rooms after, so naming the first one is almost always wrong for the
+cross-repository case the tool exists for: a link in `repo:storefront-web`
+meeting the firmware in `shared:storefront` was told its message was in
+`repo:storefront-web` and went looking where nothing had changed. The list is
+intersected with the reader's own membership — naming a room the reader is not
+in would be a different wrong answer — and past two rooms the line counts the
+rest rather than growing.
 
 That keeps the recipient's context small, and it makes `read` mean that the
 recipient actually saw the content rather than that a notification arrived.
@@ -317,7 +341,7 @@ for it. Re-read before editing.
 | `room_who` | `session_id?`, `room?` | sessions, each with `liveness` |
 | `room_set_autonomy_cap` | `session_id?`, `room?`, `autonomy` | `room`, `autonomy` |
 | `msg_send` | `session_id`, `to`, `subject?`, `body?`, `reply_to?`, `ttl_s?` | `message_id`, `recipients`, `warning?` |
-| `msg_recv` | `session_id`, `limit?` | messages, marked read |
+| `msg_recv` | `session_id`, `limit?` | messages, marked read; `inbox` when empty |
 | `msg_ack` | `session_id`, `message_id` | nothing |
 | `msg_unread` | `session_id` | `count` |
 | `msg_sent` | `session_id`, `limit?` | `messages`: each with `states`, `pending`, `left`, `sent` |

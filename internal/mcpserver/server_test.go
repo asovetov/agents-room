@@ -444,3 +444,59 @@ func TestUnknownSessionIsAToolError(t *testing.T) {
 		t.Fatalf("the current directory's room cap was changed to %d by a call with a bad id", cap)
 	}
 }
+
+// An empty msg_recv has to say where the session can be reached and whether
+// anything ever reached it. Without that, "0 message(s)" is indistinguishable
+// from "you are looking in the wrong room", and the agent that suspected the
+// second had to read the database by hand.
+func TestEmptyRecvExplainsItself(t *testing.T) {
+	cs, _ := connect(t)
+	ctx := context.Background()
+	a := call(t, cs, "room_join", map[string]any{"room": "repo:x", "harness": "test", "harness_key": "a"})
+	b := call(t, cs, "room_join", map[string]any{"room": "repo:x", "harness": "test", "harness_key": "b"})
+	aID, _ := a["session_id"].(string)
+	bID, _ := b["session_id"].(string)
+
+	// Nothing was ever sent to a.
+	res, err := cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "msg_recv", Arguments: map[string]any{"session_id": aID},
+	})
+	if err != nil {
+		t.Fatalf("msg_recv: %v", err)
+	}
+	out, _ := res.StructuredContent.(map[string]any)
+	inbox, _ := out["inbox"].(map[string]any)
+	if inbox == nil {
+		t.Fatal("an empty msg_recv carried no inbox summary")
+	}
+	if d, _ := inbox["delivered"].(float64); d != 0 {
+		t.Fatalf("delivered = %v for a session nobody wrote to, want 0", inbox["delivered"])
+	}
+	if body := contentText(t, res); !strings.Contains(body, "repo:x") {
+		t.Fatalf("empty recv text %q does not name the room the session is in", body)
+	}
+
+	// Send and read, then the same call must say the messages were read rather
+	// than that nothing ever arrived.
+	call(t, cs, "msg_send", map[string]any{
+		"session_id": bID, "to": aID, "subject": "s", "body": "hello",
+	})
+	call(t, cs, "msg_recv", map[string]any{"session_id": aID})
+	res, err = cs.CallTool(ctx, &mcp.CallToolParams{
+		Name: "msg_recv", Arguments: map[string]any{"session_id": aID},
+	})
+	if err != nil {
+		t.Fatalf("second msg_recv: %v", err)
+	}
+	out, _ = res.StructuredContent.(map[string]any)
+	inbox, _ = out["inbox"].(map[string]any)
+	if inbox == nil {
+		t.Fatal("the second empty msg_recv carried no inbox summary")
+	}
+	if d, _ := inbox["delivered"].(float64); d != 1 {
+		t.Fatalf("delivered = %v, want 1", inbox["delivered"])
+	}
+	if r, _ := inbox["read"].(float64); r != 1 {
+		t.Fatalf("read = %v, want 1", inbox["read"])
+	}
+}

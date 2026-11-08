@@ -151,8 +151,13 @@ meet in a shared room.
 A recipient is told that messages are waiting; it fetches the body itself.
 
 ```
-[agents-room] 2 unread in room "shared:storefront"; call msg_recv
+[agents-room] 2 unread in rooms "shared:storefront", "repo:bot"; call msg_recv
 ```
+
+The rooms named are the ones the messages came through, not the first room the
+session joined. That distinction is the whole cross-repository case: a bot
+whose repository room is `repo:bot` is told the message arrived in
+`shared:storefront`, because that is where it can be found.
 
 The body stays in the store and arrives as a tool result. That keeps the
 context small and makes the delivery state honest: `read` means the recipient
