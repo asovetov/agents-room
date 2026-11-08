@@ -8,6 +8,7 @@
 | [`protocol.md`](protocol.md) | Data model, selectors, delivery states, tool reference |
 | [`harness-setup.md`](harness-setup.md) | Installing the MCP server and hooks per harness |
 | [`CONTEXT.md`](CONTEXT.md) | Entry point for a new session |
+| [`wiki/`](wiki/) | The GitHub wiki pages, versioned here so they can be reviewed |
 | [`history/`](history/) | The original Russian drafts, kept for provenance |
 
 Project documentation is written in English. The two READMEs are the
