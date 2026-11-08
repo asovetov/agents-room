@@ -500,3 +500,37 @@ func TestEmptyRecvExplainsItself(t *testing.T) {
 		t.Fatalf("read = %v, want 1", inbox["read"])
 	}
 }
+
+// A room_join that does not mention autonomy must not write 0 over the level
+// the SessionStart hook set. Two live sessions were stuck at notify this way
+// and were never woken while idle, which is the symptom their agent reported
+// as "the hook does not work when I am idle".
+func TestJoinWithoutAutonomyKeepsTheStoredLevel(t *testing.T) {
+	cs, h := connect(t)
+	ctx := context.Background()
+
+	// The hook joins first with the operator's level.
+	if _, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "chat",
+		Autonomy: hub.AutonomyHold, AutonomySet: true,
+	}); err != nil {
+		t.Fatalf("hook join: %v", err)
+	}
+
+	// The model joins without the field.
+	out := call(t, cs, "room_join", map[string]any{
+		"room": "repo:x", "harness": "test", "harness_key": "chat",
+	})
+	if v, _ := out["autonomy"].(float64); int(v) != hub.AutonomyHold {
+		t.Fatalf("autonomy = %v after a join that omitted it, want %d", out["autonomy"], hub.AutonomyHold)
+	}
+
+	// An explicit value is still honoured, so the field is not simply ignored.
+	out = call(t, cs, "room_join", map[string]any{
+		"room": "repo:x", "harness": "test", "harness_key": "chat",
+		"autonomy": hub.AutonomyWake,
+	})
+	if v, _ := out["autonomy"].(float64); int(v) != hub.AutonomyWake {
+		t.Fatalf("autonomy = %v after an explicit wake, want %d", out["autonomy"], hub.AutonomyWake)
+	}
+}

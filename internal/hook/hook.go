@@ -99,9 +99,15 @@ func runWithInput(harness, event, room string, autonomy int, in hookInput) int {
 		}
 		// Rejoining is idempotent: SessionStart fires on startup, resume,
 		// clear, compact and fork, and all of them are the same chat.
+		//
+		// The hook is the one caller that always states a level: its
+		// --autonomy comes from the harness configuration, which is the
+		// operator's decision. A model calling room_join usually omits the
+		// field, and that must not undo this.
 		if _, err := h.Join(ctx, hub.JoinOptions{
 			Room: roomName, ExtraRooms: extra, Harness: harness,
-			HarnessKey: in.SessionID, Cwd: in.Cwd, Autonomy: autonomy,
+			HarnessKey: in.SessionID, Cwd: in.Cwd,
+			Autonomy: autonomy, AutonomySet: true,
 			Label: shortID(in.SessionID),
 		}); err != nil {
 			return 0

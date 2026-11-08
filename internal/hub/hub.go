@@ -183,9 +183,20 @@ type JoinOptions struct {
 	HarnessKey string // stable id from the harness; makes a rejoin idempotent
 	Label      string
 	Tags       []string
-	Autonomy   int
-	PID        int
-	Cwd        string
+	// Autonomy is the level the caller asks for.
+	//
+	// AutonomySet says whether it was asked for at all, because zero is a
+	// legitimate level (notify) and also the zero value of a struct. Without
+	// the flag the two are indistinguishable, and that is how a rejoin that
+	// never mentioned autonomy used to write 0 over the level the SessionStart
+	// hook had set: the chat was then never woken while idle, which is exactly
+	// the symptom it reported.
+	//
+	// A rejoin that does not set it keeps the level already stored.
+	Autonomy    int
+	AutonomySet bool
+	PID         int
+	Cwd         string
 }
 
 // Join registers a session in a room and returns it.
@@ -247,10 +258,42 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 		roomIDs = append(roomIDs, id)
 	}
 
+	// Rejoining must not quietly change what the chat asked for. A harness
+	// fires SessionStart, which carries the configured level, and an MCP
+	// room_join carries whatever the model happened to pass -- often nothing,
+	// which is 0. Letting that overwrite the stored level is how two chats in
+	// the live room ended up at notify and stopped being woken while idle.
+	existing, err := h.existingSession(ctx, opt)
+	if err != nil {
+		return nil, err
+	}
+	requested, requestedSet := opt.Autonomy, opt.AutonomySet
+	var warning string
+	if existing != nil {
+		switch {
+		case !requestedSet:
+			// Not mentioned: keep what is stored.
+			requested = existing.Autonomy
+		case requested < existing.Autonomy:
+			// A rejoin may raise the level, never lower it. Lowering is the
+			// operator's decision and has one route: room_set_autonomy_cap.
+			// A rejoin that lowered it would let any caller take away the
+			// interrupt rights the chat asked for -- and a model repeating a
+			// tool call is not the operator.
+			//
+			// It is said out loud rather than ignored in silence, because a
+			// caller that meant to go quiet needs to know it did not.
+			warning = fmt.Sprintf("autonomy stays at %d: a rejoin may raise it but not "+
+				"lower it. To quiet a room, use room_set_autonomy_cap",
+				existing.Autonomy)
+			requested = existing.Autonomy
+		}
+	}
+
 	// The cap that applies is the strictest of the rooms the session is in:
 	// a shared room set to notify must not be bypassed by joining a
 	// repository room set to wake.
-	effective := opt.Autonomy
+	effective := requested
 	for _, id := range roomIDs {
 		c, err := h.roomAutonomyCap(ctx, id)
 		if err != nil {
@@ -270,20 +313,14 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 	}
 
 	var sessionID string
-	if opt.HarnessKey != "" {
-		existing, err := h.sessionByHarnessKey(ctx, opt.Harness, opt.HarnessKey)
-		if err != nil {
-			return nil, err
-		}
-		if existing != nil {
-			sessionID = existing.ID
-			if _, err := h.db.SQL().ExecContext(ctx, `
-				UPDATE sessions
-				SET cwd = ?, pid = ?, pid_started_at = ?, label = ?, tags = ?, autonomy = ?, last_seen = ?
-				WHERE id = ?`,
-				opt.Cwd, opt.PID, pidStartedAt, opt.Label, string(tags), effective, now, sessionID); err != nil {
-				return nil, fmt.Errorf("update session: %w", err)
-			}
+	if existing != nil {
+		sessionID = existing.ID
+		if _, err := h.db.SQL().ExecContext(ctx, `
+			UPDATE sessions
+			SET cwd = ?, pid = ?, pid_started_at = ?, label = ?, tags = ?, autonomy = ?, last_seen = ?
+			WHERE id = ?`,
+			opt.Cwd, opt.PID, pidStartedAt, opt.Label, string(tags), effective, now, sessionID); err != nil {
+			return nil, fmt.Errorf("update session: %w", err)
 		}
 	}
 
@@ -340,8 +377,34 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 		Tags: opt.Tags, Autonomy: effective,
 		JoinedAt: now, LastSeen: now,
 		Liveness: livenessOf(opt.PID, pidStartedAt),
-		Warning:  harnessKeyWarning(opt.HarnessKey),
+		Warning:  joinWarnings(warning, harnessKeyWarning(opt.HarnessKey)),
 	}, nil
+}
+
+// existingSession finds the row a join would update rather than create.
+//
+// Only the harness key identifies a chat. A join without one always creates a
+// session, which is deliberate: a caller that cannot say which chat it is has
+// no claim on an existing row, and matching by pid instead would merge two
+// agents that happen to share a parent process.
+func (h *Hub) existingSession(ctx context.Context, opt JoinOptions) (*Session, error) {
+	if opt.HarnessKey == "" {
+		return nil, nil
+	}
+	return h.sessionByHarnessKey(ctx, opt.Harness, opt.HarnessKey)
+}
+
+// joinWarnings joins the things a successful join wants to mention. A join
+// can be wrong in two ways at once, and dropping one to report the other
+// leaves the caller half informed.
+func joinWarnings(parts ...string) string {
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return strings.Join(out, "; ")
 }
 
 // harnessKeyWarning reports a harness key that does not belong to the process

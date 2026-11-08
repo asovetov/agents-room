@@ -69,9 +69,13 @@ type joinIn struct {
 	ExtraRooms []string `json:"extra_rooms,omitempty" jsonschema:"shared rooms to join as well, e.g. storefront"`
 	Label      string   `json:"label,omitempty" jsonschema:"short human label for this session"`
 	Tags       []string `json:"tags,omitempty" jsonschema:"tags used by tag: selectors"`
-	Autonomy   int      `json:"autonomy,omitempty" jsonschema:"0 notify, 1 hold, 2 wake"`
-	Harness    string   `json:"harness,omitempty" jsonschema:"harness name; omit to detect from the environment"`
-	HarnessKey string   `json:"harness_key,omitempty" jsonschema:"stable session id from the harness; makes a rejoin update the same session"`
+	// A pointer, so "omitted" and "0" stay different things. With a plain
+	// int, a room_join that never mentioned autonomy arrived as 0 and wrote
+	// notify over the level the SessionStart hook had set, after which the
+	// chat was never woken while idle.
+	Autonomy   *int   `json:"autonomy,omitempty" jsonschema:"0 notify, 1 hold, 2 wake; omit to keep the level you already have"`
+	Harness    string `json:"harness,omitempty" jsonschema:"harness name; omit to detect from the environment"`
+	HarnessKey string `json:"harness_key,omitempty" jsonschema:"stable session id from the harness; makes a rejoin update the same session"`
 }
 
 type joinOut struct {
@@ -98,11 +102,14 @@ func registerRoomTools(s *mcp.Server, h *hub.Hub) {
 		if key == "" {
 			key = hub.HarnessKeyFromEnv()
 		}
-		sess, err := h.Join(ctx, hub.JoinOptions{
+		opt := hub.JoinOptions{
 			Room: in.Room, ExtraRooms: in.ExtraRooms, Label: in.Label,
-			Tags: in.Tags, Autonomy: in.Autonomy,
-			Harness: in.Harness, HarnessKey: key,
-		})
+			Tags: in.Tags, Harness: in.Harness, HarnessKey: key,
+		}
+		if in.Autonomy != nil {
+			opt.Autonomy, opt.AutonomySet = *in.Autonomy, true
+		}
+		sess, err := h.Join(ctx, opt)
 		if err != nil {
 			return nil, joinOut{}, err
 		}

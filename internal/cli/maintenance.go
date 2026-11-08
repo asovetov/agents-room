@@ -238,6 +238,7 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 		// the operator after sessions that no longer exist.
 		reportGoneSessions(ctx, h, stdout, line)
 		reportUnhookedSession(ctx, h, sessions, stdout, line)
+		reportQuietAutonomy(sessions, line)
 		// A lease that lapses under a session that is still working is the
 		// case the TTL is meant to prevent, and nothing else can see it
 		// coming. The hook renews on every tool event, so a warning here
@@ -415,6 +416,25 @@ func reportUnhookedSession(ctx context.Context, h *hub.Hub, sessions []hub.Sessi
 			"probably not configured for this harness, so its leases lapse and wake "+
 			"signals reach nobody. See docs/harness-setup.md",
 			sessionName(s), time.Duration(idle)*time.Second)
+	}
+}
+
+// reportQuietAutonomy names a live session that cannot be woken while idle.
+//
+// Below wake the signal rides the current turn: it arrives only when the agent
+// is already doing something. An idle chat at notify or hold is therefore
+// unreachable, which looks exactly like a broken hook and is invisible
+// everywhere else -- the room shows the session as alive, the wake signal is
+// reported as available, and the message simply waits.
+func reportQuietAutonomy(sessions []hub.Session, line func(bool, string, ...any)) {
+	for _, s := range sessions {
+		if s.Liveness != hub.LivenessAlive || s.Autonomy >= hub.AutonomyWake {
+			continue
+		}
+		line(false, "%s is alive but its autonomy is %d, so it will not be woken "+
+			"while idle: a signal only rides a turn it is already taking. A rejoin "+
+			"can raise it to 2; it can never lower it",
+			sessionName(s), s.Autonomy)
 	}
 }
 

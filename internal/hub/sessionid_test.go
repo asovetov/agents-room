@@ -204,3 +204,126 @@ func TestInboxListsEveryRoomOfTheSession(t *testing.T) {
 		}
 	}
 }
+
+// A rejoin that does not mention autonomy keeps the level the chat already
+// has. An MCP room_join sends no autonomy field, which used to arrive as 0
+// and overwrite the 1 the SessionStart hook had set; the chat was then never
+// woken while idle, which is the symptom two live sessions reported.
+func TestRejoinWithoutAutonomyKeepsTheStoredLevel(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	// The hook joins first, stating the operator's level.
+	first, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "chat",
+		Autonomy: AutonomyHold, AutonomySet: true,
+	})
+	if err != nil {
+		t.Fatalf("hook join: %v", err)
+	}
+	if first.Autonomy != AutonomyHold {
+		t.Fatalf("first join autonomy = %d, want %d", first.Autonomy, AutonomyHold)
+	}
+
+	// A model calls room_join with the field omitted.
+	again, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "chat",
+	})
+	if err != nil {
+		t.Fatalf("rejoin: %v", err)
+	}
+	if again.ID != first.ID {
+		t.Fatalf("rejoin created %s, want the same session %s", again.ID, first.ID)
+	}
+	if again.Autonomy != AutonomyHold {
+		t.Fatalf("autonomy after a rejoin that omitted it = %d, want %d kept",
+			again.Autonomy, AutonomyHold)
+	}
+}
+
+// A caller that explicitly asks to go quiet is told it did not. Lowering on a
+// rejoin is refused, but refusing in silence would leave a caller that meant
+// notify believing it got it.
+func TestRejoinThatAsksToLowerIsToldItWasNot(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	if _, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "chat",
+		Autonomy: AutonomyHold, AutonomySet: true,
+	}); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	got, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "chat",
+		Autonomy: AutonomyNotify, AutonomySet: true,
+	})
+	if err != nil {
+		t.Fatalf("rejoin: %v", err)
+	}
+	if got.Autonomy != AutonomyHold {
+		t.Fatalf("autonomy = %d, want the stored %d", got.Autonomy, AutonomyHold)
+	}
+	if !strings.Contains(got.Warning, "autonomy stays") {
+		t.Fatalf("warning = %q, want it to say the level did not change", got.Warning)
+	}
+	if !strings.Contains(got.Warning, "room_set_autonomy_cap") {
+		t.Fatalf("warning = %q, want it to name the way to lower a room", got.Warning)
+	}
+}
+
+// A rejoin may raise the level, never lower it: lowering is the operator's
+// decision and has one route, the room cap.
+func TestRejoinRaisesButNeverLowers(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	if _, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "chat",
+		Autonomy: AutonomyWake, AutonomySet: true,
+	}); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+
+	lowered, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "chat",
+		Autonomy: AutonomyNotify, AutonomySet: true,
+	})
+	if err != nil {
+		t.Fatalf("rejoin: %v", err)
+	}
+	if lowered.Autonomy != AutonomyWake {
+		t.Fatalf("a rejoin lowered autonomy to %d; only the room cap may lower it",
+			lowered.Autonomy)
+	}
+
+	// Raising works, so the rule is "never lower", not "never change".
+	raised, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "chat",
+		Autonomy: AutonomyWake, AutonomySet: true,
+	})
+	if err != nil {
+		t.Fatalf("rejoin: %v", err)
+	}
+	if raised.Autonomy != AutonomyWake {
+		t.Fatalf("autonomy = %d, want %d", raised.Autonomy, AutonomyWake)
+	}
+}
+
+// The room cap still lowers the level, so the operator keeps the one lever
+// that is meant to.
+func TestRoomCapStillLowersOnRejoin(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	if _, err := h.SetRoomAutonomyCap(ctx, "repo:x", AutonomyNotify); err != nil {
+		t.Fatalf("set cap: %v", err)
+	}
+	s, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "chat",
+		Autonomy: AutonomyWake, AutonomySet: true,
+	})
+	if err != nil {
+		t.Fatalf("join: %v", err)
+	}
+	if s.Autonomy != AutonomyNotify {
+		t.Fatalf("autonomy = %d under a notify cap, want %d", s.Autonomy, AutonomyNotify)
+	}
+}

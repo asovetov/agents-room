@@ -149,10 +149,17 @@ func runJoin(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	}
 	defer h.Close()
 
-	s, err := h.Join(ctx, hub.JoinOptions{
+	// Only an explicit --autonomy asks for a level. Without one, a rejoin
+	// keeps what the session already has, so running `agents-room join` by
+	// hand does not silently lower a chat the hook had configured.
+	opt := hub.JoinOptions{
 		Room: *room, ExtraRooms: extraRooms, Label: *label, Tags: tags,
-		Autonomy: *autonomy, HarnessKey: *key, Harness: *harness,
-	})
+		HarnessKey: *key, Harness: *harness,
+	}
+	if autonomySet(args) {
+		opt.Autonomy, opt.AutonomySet = *autonomy, true
+	}
+	s, err := h.Join(ctx, opt)
 	if err != nil {
 		return fail(stderr, err)
 	}
@@ -418,6 +425,22 @@ func runSent(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	return 0
+}
+
+// autonomySet reports whether --autonomy appeared on the command line.
+//
+// The flag's default is 0, which is a real level, so the value alone cannot
+// say whether the caller asked for notify or said nothing at all. The
+// difference matters on a rejoin: one keeps the stored level, the other
+// lowers it.
+func autonomySet(args []string) bool {
+	for _, a := range args {
+		if a == "--autonomy" || a == "-autonomy" || strings.HasPrefix(a, "--autonomy=") ||
+			strings.HasPrefix(a, "-autonomy=") {
+			return true
+		}
+	}
+	return false
 }
 
 // describeInbox turns an empty recv into an answer the reader can act on: the

@@ -335,7 +335,7 @@ for it. Re-read before editing.
 
 | Tool | Arguments | Returns |
 |---|---|---|
-| `room_join` | `room?`, `extra_rooms?`, `label?`, `tags?`, `autonomy?`, `harness?`, `harness_key?` | `session_id`, `rooms`, `autonomy`, `warning?` |
+| `room_join` | `room?`, `extra_rooms?`, `label?`, `tags?`, `autonomy?`, `harness?`, `harness_key?` | `session_id`, `rooms`, `autonomy`, `warning?`; `autonomy` omitted keeps the stored level, and a lower one is refused with a warning |
 | `room_leave` | `session_id` | nothing, leaves every room |
 | `room_leave_room` | `session_id`, `room` | nothing, stays in the rest |
 | `room_who` | `session_id?`, `room?` | sessions, each with `liveness` |
@@ -370,6 +370,33 @@ cap. The cap is per room and defaults to `wake`; an operator lowers it with
 running keep their level until they rejoin, so raising a cap never silently
 grants interrupt rights to a session that did not ask for them. `room_who` shows every session's effective level, so the operator always
 knows who is allowed to interrupt whom.
+
+### A rejoin raises the level, never lowers it
+
+Only `wake` can start a turn in an idle session; below it the signal rides a
+turn the agent is already taking, so an idle chat at `notify` or `hold` is
+unreachable and looks exactly like a broken hook. The level therefore has to
+survive a rejoin.
+
+It used to not. `room_join` over MCP carried `autonomy` as a plain int with
+`omitempty`, so a call that never mentioned the field arrived as `0`, and the
+rejoin wrote it over the level the `SessionStart` hook had set. Two live
+sessions sat at `notify` this way and were never woken while idle; their agent
+reported it as "the hook does not work when I am idle", which is precisely what
+it looks like from inside the chat.
+
+The level is now kept unless a rejoin explicitly raises it:
+
+- **not mentioned** — the stored level is kept, so a model repeating a tool
+  call cannot take away what the chat asked for;
+- **higher** — applied, still clamped by the room cap;
+- **lower** — refused, with a warning naming the level that stayed and the one
+  way to lower a room, which is the cap. A caller that meant to go quiet is
+  told it did not, rather than left believing it did.
+
+`doctor` reports every live session below `wake`, because this is invisible
+otherwise: the room shows the session as alive and the wake signal as
+available, and the message simply waits.
 
 A harness without a wake lever cannot act on level 1 or 2. Its messages stay
 `undeliverable` until the agent pulls them, and the room says so instead of
