@@ -426,3 +426,64 @@ func TestSentReaderInACommonRepositoryRoomIsNotSharedOnly(t *testing.T) {
 		t.Fatal("a reader in a common repository room was reported as shared-only")
 	}
 }
+
+// A process may not make a second session for the chat it is already
+// registered as. The live store had pid 2734222 twice -- the real UUID, and
+// "913e47" beside it, at autonomy 2 and 0 -- and both answered the same
+// messages. A warning was not enough: it is a line the model reads past, and
+// the damage is two sessions that both look alive.
+func TestJoinRefusesASecondSessionForTheSameChat(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "673df651-29d8-422b-8745-a0bc9a12c60e")
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+
+	if _, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code",
+		HarnessKey: "673df651-29d8-422b-8745-a0bc9a12c60e",
+	}); err != nil {
+		t.Fatalf("join with its own key: %v", err)
+	}
+
+	_, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "913e47",
+	})
+	if err == nil {
+		t.Fatal("a second key for the same chat was accepted")
+	}
+	if !strings.Contains(err.Error(), "673df651") {
+		t.Fatalf("error %q does not name the key this process actually has", err)
+	}
+
+	// The chat itself is untouched and can still be rejoined.
+	if _, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code",
+	}); err != nil {
+		t.Fatalf("rejoin without a key: %v", err)
+	}
+}
+
+// A different process may join under a key of its own choosing: that is an
+// operator, not a chat splitting itself in two.
+func TestJoinAllowsAnotherProcessToUseItsOwnKey(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "673df651-29d8-422b-8745-a0bc9a12c60e")
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+
+	if _, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code",
+		HarnessKey: "673df651-29d8-422b-8745-a0bc9a12c60e",
+	}); err != nil {
+		t.Fatalf("join: %v", err)
+	}
+
+	// Another pid: the refusal is about one chat, not about the store.
+	t.Setenv("AGENTS_ROOM_PID", "4243")
+	if _, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code",
+		HarnessKey: "11111111-2222-3333-4444-555555555555",
+	}); err != nil {
+		t.Fatalf("a separate process could not join under its own key: %v", err)
+	}
+}

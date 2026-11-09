@@ -214,9 +214,11 @@ func TestTouchRefreshesPIDOnlyForItsOwnSession(t *testing.T) {
 
 	// The chat this test stands in for, and the key it rejoins with.
 	chat := standInChat(t, "my-key")
-	t.Setenv("CLAUDE_CODE_SESSION_ID", "my-key")
-	t.Setenv("AGENTS_ROOM_PID", strconv.Itoa(chat))
 
+	// Both sessions are created before this process claims to be one of them.
+	// A process that already knows its own harness id may not join under
+	// another key -- that is how one chat became two -- and this test is about
+	// Touch, not about that refusal.
 	own, err := h.Join(ctx, JoinOptions{
 		Room: "repo:x", Harness: "claude-code", HarnessKey: "my-key", PID: 4242,
 	})
@@ -229,6 +231,9 @@ func TestTouchRefreshesPIDOnlyForItsOwnSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	t.Setenv("CLAUDE_CODE_SESSION_ID", "my-key")
+	t.Setenv("AGENTS_ROOM_PID", strconv.Itoa(chat))
 
 	if err := h.Touch(ctx, own.ID); err != nil {
 		t.Fatalf("touch own: %v", err)

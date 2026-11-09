@@ -267,6 +267,19 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	// This process already has a session under another key, and joining again
+	// would make a second one. The two then answer the same messages under
+	// different autonomy levels -- the live store had exactly that, at 2 and 0,
+	// and the quiet half was the one the agent kept talking through.
+	//
+	// It is refused, not warned about: a warning is a line in a tool result
+	// that the model reads past, and the damage is two sessions that both look
+	// alive. The error names the session to rejoin, which is the whole repair.
+	if existing == nil {
+		if err := h.refuseSplitOfOwnChat(ctx, opt.Harness, opt.HarnessKey); err != nil {
+			return nil, err
+		}
+	}
 	requested, requestedSet := opt.Autonomy, opt.AutonomySet
 	var warning string
 	if existing != nil {
@@ -405,6 +418,49 @@ func joinWarnings(parts ...string) string {
 		}
 	}
 	return strings.Join(out, "; ")
+}
+
+// refuseSplitOfOwnChat stops a process from creating a second session for the
+// chat it is already registered as.
+//
+// The proof is the environment, not the pid. A harness exports its session id
+// to every process it starts, so a process that offers a key other than its
+// own is not describing a second chat -- it is misnaming the one it is. The
+// live store had pid 2734222 twice for this reason: the real UUID, and
+// "913e47" beside it, at autonomy 2 and 0, both answering the same messages.
+//
+// Nothing here is guessed. A process with no harness id in its environment is
+// left alone: it may be a script, an operator's CLI, or a second chat, and the
+// room has no way to tell, so it does not pretend to. The pid is not used as
+// evidence either, because two chats can share a parent.
+func (h *Hub) refuseSplitOfOwnChat(ctx context.Context, harness, key string) error {
+	own := strings.TrimSpace(HarnessKeyFromEnv())
+	if own == "" || key == "" || key == own {
+		return nil
+	}
+	// The pid is what makes this the same chat and not an operator. A process
+	// in another terminal may join under a key of its own choosing; this one
+	// already registered as `own` and is now naming itself something else.
+	pid := HarnessPIDFromEnv()
+	if pid == 0 {
+		return nil
+	}
+	var id string
+	err := h.db.SQL().QueryRowContext(ctx, `
+		SELECT id FROM sessions WHERE harness = ? AND harness_key = ? AND pid = ?
+		ORDER BY joined_at ASC LIMIT 1`, harness, own, pid).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("look up this process's session: %w", err)
+	}
+	mine := &Session{ID: id}
+	return fmt.Errorf("harness_key %q is not this process's own: it is %q, already "+
+		"joined as session %s. Using another key makes a second session for one chat, "+
+		"and the two answer the same messages under different autonomy. Omit "+
+		"harness_key to rejoin %s, or pass %q to say which chat you mean",
+		key, own, mine.ID, mine.ID, own)
 }
 
 // harnessKeyWarning reports a harness key that does not belong to the process

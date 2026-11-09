@@ -51,6 +51,21 @@ join succeeds and the caller starts answering messages addressed to someone
 else. The warning names both ids and goes to stderr in the CLI, so the session
 id on stdout stays parseable, and into `msg_send`-style text in MCP.
 
+**One exception, and it is a refusal: a process may not make a second session
+for the chat it is already registered as.** When the harness exports a session
+id and the pid that joined under it is the caller's own, offering a different
+key is not describing another chat — it is misnaming this one. The live store
+had pid 2734222 twice, under the real UUID and under `913e47`, at autonomy 2
+and 0, and both answered the same messages; the quiet half is the one the agent
+kept talking through. A warning was not enough, because a warning is a line in
+a tool result that the model reads past. The error names the key the process
+actually has and the session to rejoin.
+
+A different process may still join under a key of its own choosing: that is an
+operator, not a chat splitting itself in two, and the check is scoped to the
+caller's own pid for exactly that reason. Nothing is inferred from the shape of
+a key — a room has no business judging what one looks like.
+
 The MCP 2026-07-28 revision removed protocol sessions and
 server-initiated requests, and asks servers to mint a handle the model passes
 back; this follows that shape.

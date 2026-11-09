@@ -721,7 +721,13 @@ func TestJoinWarnsAboutAForeignHarnessKey(t *testing.T) {
 
 	// The right key, and a caller with no harness in its environment, are
 	// both silent: the warning must not cry wolf on the normal path.
-	ok, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "claude-code", HarnessKey: "mine"})
+	//
+	// Each of these is a different chat, so each gets its own pid. Two
+	// sessions on one pid under different keys are the split this warning is
+	// about, and a test that reused the pid would be testing that instead.
+	ok, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "mine", PID: 4242,
+	})
 	if err != nil {
 		t.Fatalf("join with the right key: %v", err)
 	}
@@ -729,7 +735,9 @@ func TestJoinWarnsAboutAForeignHarnessKey(t *testing.T) {
 		t.Fatalf("the right key warned: %q", ok.Warning)
 	}
 	t.Setenv("CLAUDE_CODE_SESSION_ID", "")
-	none, err := h.Join(ctx, JoinOptions{Room: "repo:x", Harness: "test", HarnessKey: "x"})
+	none, err := h.Join(ctx, JoinOptions{
+		Room: "repo:x", Harness: "test", HarnessKey: "x", PID: 4243,
+	})
 	if err != nil {
 		t.Fatalf("join without an env key: %v", err)
 	}
