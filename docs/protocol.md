@@ -294,6 +294,30 @@ read and would still be counted as unread.
 | `expired` | TTL passed before the body was read |
 | `undeliverable` | this harness has no wake lever; the message waits for a pull |
 
+### The signal goes to the recipient's socket, not the sender's
+
+A wake signal is posted to an inbox socket, and `CLAUDE_CODE_MESSAGING_SOCKET`
+names the socket of the chat whose process is running. The hook that emits the
+signal runs under the **sender**, so reading that variable there reaches the
+sender's own inbox: the sender was told about its own message while the
+recipient, sitting idle, was never told anything. The delivery sat in `stored`
+until somebody typed at the chat by hand.
+
+So a session records its socket at join time (`sessions.wake_socket`, schema
+version 7), and the sender's hook posts to each waiting recipient's recorded
+socket. The post counts as an own-child message to the receiving chat, so
+Claude Code delivers it without an approval prompt.
+
+This runs on every tool event, before anything about the calling session is
+resolved. The hook that fires belongs to whichever chat happened to act; the
+messages waiting are usually somebody else's, and a hook whose own session
+cannot be found — an operator running the binary by hand, or a room that could
+not be derived — must still wake the others.
+
+A recipient that recorded no socket is skipped rather than guessed at. Its
+messages stay `stored` and are announced the next time it runs anything, which
+is the honest behaviour promised for a harness with no wake lever.
+
 A wake signal is emitted once per message. `offered` and `accepted` still
 count as unread, because the agent has not fetched the body yet, but they no
 longer trigger another signal: the hook only signals a `stored` row. Signalling

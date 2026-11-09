@@ -173,6 +173,31 @@ var migrations = []migration{
 			return nil
 		},
 	},
+	{
+		version: 7,
+		apply: func(ctx context.Context, conn *sql.Conn) error {
+			// The wake socket belongs to the session it wakes, not to the
+			// process that emits the signal.
+			//
+			// Claude Code exports CLAUDE_CODE_MESSAGING_SOCKET to a chat's own
+			// processes, so a hook reads the socket of the session it runs
+			// under. A wake signal is emitted by the *sender's* hook, on the
+			// sender's machine, and it used to post to that socket -- the
+			// sender's own inbox. The recipient, sitting idle, was never told
+			// anything; the message waited in `stored` until somebody typed at
+			// it. Recording the socket with the session is what lets the
+			// sender's hook reach the recipient's inbox.
+			//
+			// A session that records none is not woken: its messages stay
+			// undeliverable and wait for a pull, which is what the protocol
+			// already says about a harness with no wake lever.
+			if _, err := conn.ExecContext(ctx,
+				`ALTER TABLE sessions ADD COLUMN wake_socket TEXT NOT NULL DEFAULT ''`); err != nil {
+				return fmt.Errorf("migration 7: %w", err)
+			}
+			return nil
+		},
+	},
 }
 
 // migrate applies every step the database has not seen yet.

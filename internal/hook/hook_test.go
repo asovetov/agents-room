@@ -1,11 +1,14 @@
 package hook
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -405,5 +408,174 @@ func TestToolEventReannouncesAnOfferedMessage(t *testing.T) {
 	})
 	if !strings.Contains(second, "unread") {
 		t.Fatalf("a later tool event stayed silent about a message nobody fetched: %q", second)
+	}
+}
+
+// A wake signal has to reach the recipient's inbox, not the sender's.
+//
+// The socket is read from the process environment, and a hook runs under the
+// environment of the chat it belongs to. So the sender's hook used to post to
+// the sender's own socket: the sender was told about its own message and the
+// recipient, sitting idle, was never told anything. That is why an idle chat
+// had to be woken by hand while the delivery sat in `stored`.
+//
+// This test gives each side its own socket and checks which one is spoken to.
+func TestWakeSignalReachesTheRecipientsSocket(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets")
+	}
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "room.db")
+	t.Setenv("AGENTS_ROOM_DB", dbPath)
+
+	h, err := hub.OpenPath(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	// Two chats, each with its own inbox socket recorded at join time.
+	senderSock, senderGot := listenInbox(t)
+	recvSock, recvGot := listenInbox(t)
+
+	sender, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "sender",
+		Autonomy: hub.AutonomyWake, AutonomySet: true, WakeSocket: senderSock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "recv",
+		Autonomy: hub.AutonomyWake, AutonomySet: true, WakeSocket: recvSock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Send(ctx, hub.SendOptions{
+		From: sender.ID, To: recv.ID, Subject: "s", Body: "b",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The sender's hook runs. Its own environment names its own socket, which
+	// is exactly the trap: reading the environment here reaches the wrong
+	// chat.
+	t.Setenv("CLAUDE_CODE_MESSAGING_SOCKET", senderSock)
+	captureStdout(t, func() int {
+		return runWithInput("claude-code", "PostToolBatch", "repo:x", hub.AutonomyWake, hookInput{
+			SessionID: "sender", Cwd: "/tmp",
+		})
+	})
+
+	select {
+	case line := <-recvGot:
+		if !strings.Contains(line, "msg_recv") {
+			t.Fatalf("the recipient was told %q, want the nudge line", line)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the recipient's inbox was never written: the signal went somewhere else")
+	}
+
+	// And nothing was posted back to the sender about its own message.
+	select {
+	case line := <-senderGot:
+		t.Fatalf("the sender's own inbox was written (%q); the signal went to the wrong chat", line)
+	case <-time.After(150 * time.Millisecond):
+	}
+}
+
+// listenInbox accepts one connection on a fresh unix socket and reports the
+// message line it carried.
+func listenInbox(t *testing.T) (path string, got <-chan string) {
+	t.Helper()
+	dir, err := os.MkdirTemp("/tmp", "hookinbox")
+	if err != nil {
+		t.Skipf("short temp dir unavailable: %v", err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	path = filepath.Join(dir, "inbox.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Skipf("unix socket unavailable: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+
+	ch := make(chan string, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		scanner := bufio.NewScanner(conn)
+		for scanner.Scan() {
+			var obj map[string]any
+			if json.Unmarshal(scanner.Bytes(), &obj) != nil {
+				continue
+			}
+			if msg, ok := obj["message"].(map[string]any); ok {
+				if content, ok := msg["content"].(string); ok {
+					ch <- content
+					return
+				}
+			}
+		}
+	}()
+	return path, ch
+}
+
+// Waking idle recipients does not depend on the caller's own session being
+// resolvable. The hook that fires belongs to whichever chat acted; the
+// messages waiting are usually somebody else's, and the caller may not even
+// be in the room it is running in.
+func TestWakingIsIndependentOfTheCallersSession(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets")
+	}
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "room.db")
+	t.Setenv("AGENTS_ROOM_DB", dbPath)
+
+	h, err := hub.OpenPath(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+
+	senderSock, _ := listenInbox(t)
+	recvSock, recvGot := listenInbox(t)
+	sender, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "sender",
+		Autonomy: hub.AutonomyWake, AutonomySet: true, WakeSocket: senderSock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recv, err := h.Join(ctx, hub.JoinOptions{
+		Room: "repo:x", Harness: "claude-code", HarnessKey: "recv",
+		Autonomy: hub.AutonomyWake, AutonomySet: true, WakeSocket: recvSock,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.Send(ctx, hub.SendOptions{
+		From: sender.ID, To: recv.ID, Subject: "s", Body: "b",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// A hook whose session is in no room at all: an operator running the
+	// binary by hand, or a chat whose room could not be derived. It must
+	// still wake the recipient.
+	captureStdout(t, func() int {
+		return runWithInput("claude-code", "PostToolBatch", "repo:nowhere", hub.AutonomyWake,
+			hookInput{SessionID: "stranger", Cwd: "/tmp"})
+	})
+
+	select {
+	case <-recvGot:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a hook with no session of its own did not wake the recipient")
 	}
 }

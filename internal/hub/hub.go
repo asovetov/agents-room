@@ -88,6 +88,11 @@ type Session struct {
 	// is not mistaken for the chat that used to hold it. Zero means the
 	// platform could not report it.
 	PIDStartedAt int64 `json:"pid_started_at,omitempty"`
+	// WakeSocket is the inbox socket this chat's harness reads, recorded at
+	// join time. Another session's hook posts a wake signal there; an empty
+	// value means this chat cannot be woken while idle and its messages wait
+	// for a pull.
+	WakeSocket string `json:"wake_socket,omitempty"`
 	// Warning is set when the join succeeded but looks like a mistake the
 	// caller can still correct. It is not an error: a join that is right for
 	// an unusual setup must still work.
@@ -197,6 +202,11 @@ type JoinOptions struct {
 	AutonomySet bool
 	PID         int
 	Cwd         string
+	// WakeSocket is the inbox socket this chat's harness will read, when it
+	// has one. It is recorded so another session's hook can post there: a
+	// wake signal is emitted by the sender, on the sender's machine, and the
+	// socket it must reach is the recipient's.
+	WakeSocket string
 }
 
 // Join registers a session in a room and returns it.
@@ -330,9 +340,11 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 		sessionID = existing.ID
 		if _, err := h.db.SQL().ExecContext(ctx, `
 			UPDATE sessions
-			SET cwd = ?, pid = ?, pid_started_at = ?, label = ?, tags = ?, autonomy = ?, last_seen = ?
+			SET cwd = ?, pid = ?, pid_started_at = ?, label = ?, tags = ?, autonomy = ?,
+			    last_seen = ?, wake_socket = CASE WHEN ? <> '' THEN ? ELSE wake_socket END
 			WHERE id = ?`,
-			opt.Cwd, opt.PID, pidStartedAt, opt.Label, string(tags), effective, now, sessionID); err != nil {
+			opt.Cwd, opt.PID, pidStartedAt, opt.Label, string(tags), effective, now,
+			opt.WakeSocket, opt.WakeSocket, sessionID); err != nil {
 			return nil, fmt.Errorf("update session: %w", err)
 		}
 	}
@@ -347,10 +359,10 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 		_, err = h.db.SQL().ExecContext(ctx, `
 			INSERT INTO sessions
 				(id, room_id, harness, cwd, pid, pid_started_at, label, tags,
-				 autonomy, joined_at, last_seen, harness_key)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				 autonomy, joined_at, last_seen, harness_key, wake_socket)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			sessionID, roomIDs[0], opt.Harness, opt.Cwd, opt.PID, pidStartedAt,
-			opt.Label, string(tags), effective, now, now, opt.HarnessKey)
+			opt.Label, string(tags), effective, now, now, opt.HarnessKey, opt.WakeSocket)
 		if err != nil {
 			return nil, fmt.Errorf("insert session: %w", err)
 		}

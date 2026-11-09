@@ -104,11 +104,16 @@ func runWithInput(harness, event, room string, autonomy int, in hookInput) int {
 		// --autonomy comes from the harness configuration, which is the
 		// operator's decision. A model calling room_join usually omits the
 		// field, and that must not undo this.
+		// The inbox socket is recorded with the session, because the process
+		// that will need it is not this one: another chat's hook posts here to
+		// wake this chat while it is idle, and only this process can see its
+		// own socket in the environment.
 		if _, err := h.Join(ctx, hub.JoinOptions{
 			Room: roomName, ExtraRooms: extra, Harness: harness,
 			HarnessKey: in.SessionID, Cwd: in.Cwd,
 			Autonomy: autonomy, AutonomySet: true,
-			Label: shortID(in.SessionID),
+			WakeSocket: wake.SocketPath(),
+			Label:      shortID(in.SessionID),
 		}); err != nil {
 			return 0
 		}
@@ -189,6 +194,14 @@ func normalizeEvent(harness, event string) string {
 // agent never reaches the recv the nudge was asking for and the Stop hook
 // loops forever.
 func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event string, stopActive bool) int {
+	// Every tool event is the moment to look for chats that cannot announce
+	// themselves. This runs before anything about the caller is resolved,
+	// because the hook that happens to fire belongs to whichever chat acted
+	// and the messages waiting are usually somebody else's: waking only when
+	// the caller has mail, or only when the caller's room could be derived,
+	// is how an idle recipient was never woken at all.
+	wakeIdleRecipients(ctx, h, retryWindow(event))
+
 	self, err := h.FindSession(ctx, roomName, harness, harnessKey)
 	if err != nil || self == nil {
 		return 0
@@ -208,22 +221,6 @@ func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event
 		return 0
 	}
 
-	// Posting to the session's own inbox socket is the only lever that
-	// starts a turn in an idle session, so it belongs to the wake level.
-	// At notify and hold the signal rides the current turn instead; doing
-	// both would wake the agent at level 0, which the operator asked not to
-	// happen.
-	//
-	// The post counts as an own-child message, so Claude Code auto-delivers
-	// it without an approval prompt.
-	if harness == "claude-code" && self.Autonomy >= hub.AutonomyWake {
-		if path := wake.SocketPath(); path != "" {
-			if err := wake.PostToSocket(path, wake.SocketToken(), res.Line); err == nil {
-				h.MarkOffered(ctx, self.ID, hub.StateAccepted)
-				return 0
-			}
-		}
-	}
 	out := outputFor(harness, event, self.Autonomy, res.Line)
 	if out == "" {
 		// Nothing went out for this event at this level, and the delivery
@@ -235,6 +232,41 @@ func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event
 	h.MarkOffered(ctx, self.ID, hub.StateOffered)
 	fmt.Fprintln(os.Stdout, out)
 	return 0
+}
+
+// wakeIdleRecipients posts a nudge to every session that has a message waiting
+// and a socket to receive it, and returns how many posts were delivered.
+//
+// This is the only lever that starts a turn in an idle chat, so it is the only
+// way a message reaches an agent that is not already doing something -- which
+// is most of the time. It runs on the *sender's* hook, so every socket comes
+// from the recipient's row: this process has no idea where the other chats
+// live, and the one socket it can see is its own.
+//
+// A session that recorded no socket is skipped rather than guessed at. Its
+// messages stay stored and are announced the next time it runs anything, which
+// is the honest behaviour the protocol promises for a harness with no wake
+// lever.
+func wakeIdleRecipients(ctx context.Context, h *hub.Hub, minAge int64) int {
+	wakers, err := h.Wakers(ctx, minAge)
+	if err != nil {
+		return 0
+	}
+	posted := 0
+	for _, w := range wakers {
+		if w.Socket == "" {
+			continue
+		}
+		line := wake.Nudge(w.Rooms, w.Pending)
+		if err := wake.PostToSocket(w.Socket, "", line); err != nil {
+			// The chat may have exited without leaving; its row stays and its
+			// messages wait, which is the safe direction.
+			continue
+		}
+		h.MarkOffered(ctx, w.SessionID, hub.StateAccepted)
+		posted++
+	}
+	return posted
 }
 
 // outputFor renders the response the given harness expects.

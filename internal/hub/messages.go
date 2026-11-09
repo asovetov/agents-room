@@ -848,6 +848,65 @@ func (h *Hub) Inbox(ctx context.Context, sessionID string) (*InboxSummary, error
 	return out, nil
 }
 
+// Waker is one recipient that can be told about a waiting message.
+type Waker struct {
+	SessionID string `json:"session_id"`
+	Label     string `json:"label,omitempty"`
+	// Socket is the inbox socket this chat's harness reads. Empty means the
+	// chat cannot be woken while idle and its message waits for a pull.
+	Socket string `json:"socket,omitempty"`
+	// Pending is how many messages are waiting for this recipient with no
+	// signal yet.
+	Pending int `json:"pending"`
+	// Rooms are the rooms the unread messages came through, for the line.
+	Rooms []string `json:"rooms,omitempty"`
+}
+
+// Wakers lists the sessions that should be told about messages they have not
+// seen, with the socket to reach each of them.
+//
+// A wake signal is emitted by the sender's hook, which runs on the sender's
+// machine and under the sender's environment. Reading CLAUDE_CODE_MESSAGING_SOCKET
+// there yields the *sender's* inbox, so the signal used to be posted back to
+// the process that sent it while the recipient sat idle and was never told
+// anything. The socket has to come from the recipient's row.
+//
+// Only `stored` deliveries are listed, and only for sessions at wake level:
+// a message that has been offered once is the retry path's business, and a
+// session below wake cannot be woken while idle at all.
+func (h *Hub) Wakers(ctx context.Context, minAge int64) ([]Waker, error) {
+	cutoff := h.now() - minAge
+	rows, err := h.db.SQL().QueryContext(ctx, `
+		SELECT d.session_id, COALESCE(s.label, ''), COALESCE(s.wake_socket, ''),
+		       COUNT(*)
+		FROM deliveries d
+		JOIN sessions s ON s.id = d.session_id
+		WHERE s.autonomy >= ?
+		  AND (d.state = ? OR (d.state = ? AND d.updated_at <= ?))
+		GROUP BY d.session_id
+		ORDER BY d.session_id`,
+		AutonomyWake, StateStored, StateOffered, cutoff)
+	if err != nil {
+		return nil, fmt.Errorf("wakers: %w", err)
+	}
+	defer rows.Close()
+
+	out := []Waker{}
+	for rows.Next() {
+		var w Waker
+		if err := rows.Scan(&w.SessionID, &w.Label, &w.Socket, &w.Pending); err != nil {
+			return nil, fmt.Errorf("wakers: scan: %w", err)
+		}
+		rooms, err := h.UnreadRooms(ctx, w.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		w.Rooms = rooms
+		out = append(out, w)
+	}
+	return out, rows.Err()
+}
+
 // Pending counts deliveries no wake signal has been emitted for yet.
 //
 // It is the number a hook may act on. Unread includes rows already offered,

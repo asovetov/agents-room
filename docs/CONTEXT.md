@@ -79,7 +79,17 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    `*int` on the wire and `JoinOptions.AutonomySet` in the hub, so "not
    mentioned" and "asked for notify" are different things; lowering is the
    cap's job alone, and a rejoin that asks for it is told so.
-9. `sent` names the readers, not only their number, and marks the ones that
+9. A wake signal is posted to the **recipient's** socket, recorded in
+   `sessions.wake_socket` at join time (schema version 7). `CLAUDE_CODE_MESSAGING_SOCKET`
+   names the socket of the chat whose process is running, and the hook that
+   emits the signal runs under the sender — so reading it there posted the
+   signal to the sender's own inbox, and the recipient, idle, was never told
+   anything. A message then waited in `stored` until somebody typed at the
+   chat by hand. The wake pass runs on every tool event before the calling
+   session is resolved, because the hook that fires belongs to whichever chat
+   acted and the waiting messages are usually somebody else's. A recipient
+   with no recorded socket is skipped, not guessed at.
+10. `sent` names the readers, not only their number, and marks the ones that
    share only a shared room with the sender. A broadcast into a shared room
    reaches every member, so "3 read it" cannot say whether any of the three
    was the agent the message was about; one such read came from an agent that
@@ -88,7 +98,7 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    case it is the normal shape, and only the sender knows who was a bystander.
    Nothing in the store distinguishes a bystander from an intended recipient,
    so the tool reports the shape rather than guessing at a flag.
-10. A nudge names the rooms its messages came through, and an empty
+11. A nudge names the rooms its messages came through, and an empty
    `msg_recv` says why it is empty. Both are the same defect: an answer that
    is correct but indistinguishable from a different, wrong one. The nudge
    used to name the session's first room, which for a cross-repository
@@ -96,7 +106,7 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    used to be the same output for a caught-up session and a session in the
    wrong room. The rooms named are intersected with the reader's own
    membership, and past two rooms the line counts the rest.
-11. A session id that names nothing is an error on every read, and the error
+12. A session id that names nothing is an error on every read, and the error
    names the id the caller probably meant. An unknown id and an empty inbox
    are both zero rows, so without the check the wrong id is invisible: an
    agent passed its harness key to `msg_recv` for weeks and concluded nothing
@@ -105,7 +115,7 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
    looks like an identity; it is the join key, not the session id. Tools that
    resolve a room from a session refuse rather than fall back to the current
    directory, or a mistyped id writes into the wrong room.
-12. Liveness is exact only on Linux, which is the only supported platform with
+13. Liveness is exact only on Linux, which is the only supported platform with
    `/proc`. On Windows and macOS the pid, start time and process environment
    are all unavailable without a platform-specific syscall, so liveness falls
    back to "is the pid running" and duplicate rows cannot be tied back to
