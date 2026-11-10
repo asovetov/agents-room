@@ -276,16 +276,21 @@ func TestRenewExtendsAndRefusesForeignLease(t *testing.T) {
 	if r, _ := h.Claim(ctx, a.ID, "src/a.go", 60, ModeExclusive); !r.OK {
 		t.Fatal("claim failed")
 	}
+	// Pin the clock before reading it. Calling the real clock twice and
+	// comparing the two readings assumes no second boundary falls between
+	// them; on a loaded runner one does, and the test fails by one second
+	// with nothing wrong in the code under test.
 	old := h.now
 	t.Cleanup(func() { h.setClock(old) })
-	h.setClock(func() int64 { return old() + 30 })
+	now := old()
+	h.setClock(func() int64 { return now + 30 })
 
 	lease, err := h.Renew(ctx, a.ID, "src/a.go", 600)
 	if err != nil {
 		t.Fatalf("renew: %v", err)
 	}
-	if lease.ExpiresAt != old()+30+600 {
-		t.Fatalf("expires_at = %d, want %d", lease.ExpiresAt, old()+30+600)
+	if want := now + 30 + 600; lease.ExpiresAt != want {
+		t.Fatalf("expires_at = %d, want %d", lease.ExpiresAt, want)
 	}
 
 	// A session that does not hold the lease cannot renew it.
