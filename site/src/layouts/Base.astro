@@ -1,0 +1,68 @@
+---
+import '@fontsource-variable/inter';
+import '@fontsource-variable/jetbrains-mono';
+import '../styles/global.css';
+import { copy, type Lang } from '../lib/content';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const selfHref = lang === 'en' ? `${base}/` : `${base}/ru/`;
+const site = Astro.site ?? new URL('https://asovetov.github.io');
+const canonical = new URL(selfHref, site).href;
+---
+
+<!doctype html>
+<html lang={lang} class="scroll-smooth">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{t.title}</title>
+    <meta name="description" content={t.description} />
+    <link rel="canonical" href={canonical} />
+    <link rel="alternate" hreflang="en" href={new URL(`${base}/`, site).href} />
+    <link rel="alternate" hreflang="ru" href={new URL(`${base}/ru/`, site).href} />
+    <link rel="alternate" hreflang="x-default" href={new URL(`${base}/`, site).href} />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content={t.title} />
+    <meta property="og:description" content={t.description} />
+    <meta property="og:url" content={canonical} />
+    <meta property="og:locale" content={lang === 'ru' ? 'ru_RU' : 'en_US'} />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="#07080b" />
+
+    <link rel="icon" href={`${base}/favicon.svg`} type="image/svg+xml" />
+  </head>
+  <body class="min-h-dvh antialiased">
+    <a
+      href="#main"
+      class="sr-only focus:not-sr-only focus:fixed focus:top-4 focus:left-4 focus:z-50 focus:rounded-lg focus:bg-amber-400 focus:px-4 focus:py-2 focus:text-ink-950"
+    >
+      {lang === 'ru' ? 'К содержимому' : 'Skip to content'}
+    </a>
+    <slot />
+    <script>
+      // The two language versions are the same layout, so a switch should
+      // land the reader where they were, not at the top. The position rides
+      // in sessionStorage: it survives one navigation and dies with the tab.
+      const KEY = 'agents-room:scroll';
+
+      const saved = sessionStorage.getItem(KEY);
+      if (saved !== null) {
+        sessionStorage.removeItem(KEY);
+        // Wait for fonts and images, or the restored offset drifts.
+        requestAnimationFrame(() => window.scrollTo({ top: Number(saved), behavior: 'instant' }));
+      }
+
+      const switcher = document.querySelector<HTMLAnchorElement>('[data-lang-switch]');
+      switcher?.addEventListener('click', () => {
+        sessionStorage.setItem(KEY, String(window.scrollY));
+      });
+    </script>
+  </body>
+</html>

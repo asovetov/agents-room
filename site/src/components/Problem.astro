@@ -1,0 +1,36 @@
+---
+import Section from './Section.astro';
+import type { Lang } from '../lib/content';
+import { copy } from '../lib/content';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+---
+
+<Section id="problem" eyebrow={t.problem.eyebrow} title={t.problem.title}>
+  <div class="grid gap-10 lg:grid-cols-[1.4fr_1fr] lg:gap-16">
+    <div class="space-y-5 text-base leading-relaxed text-fog-300 sm:text-[17px]" data-reveal>
+      {
+        t.problem.paragraphs.map((p, i) => (
+          <p data-reveal-item class={i === 0 ? 'text-fog-200' : ''}>
+            {p}
+          </p>
+        ))
+      }
+    </div>
+
+    <aside
+      data-reveal
+      data-reveal-delay="0.1"
+      class="relative self-start rounded-xl border-l-2 border-amber-400/60 bg-white/[0.02] py-5 pr-5 pl-6"
+    >
+      <p data-reveal-item class="text-lg leading-snug font-medium text-fog-100">
+        {t.problem.punch}
+      </p>
+    </aside>
+  </div>
+</Section>

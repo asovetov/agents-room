@@ -1,0 +1,63 @@
+---
+// A copy button that only exists once the script has run. Shipping a dead
+// button and wiring it up later means a flash of a control that does
+// nothing, and a control that does nothing on a browser without clipboard
+// access at all.
+interface Props {
+  text: string;
+  label: string;
+  done: string;
+}
+
+const { text, label, done } = Astro.props;
+---
+
+<button
+  type="button"
+  class="copy hidden items-center gap-1.5 rounded-md px-2 py-1 font-mono text-[11px] text-fog-500 transition-colors hover:bg-white/5 hover:text-fog-200"
+  data-copy={text}
+  data-label={label}
+  data-done={done}
+  aria-label={label}
+>
+  <svg
+    class="size-3.5"
+    viewBox="0 0 16 16"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="1.4"
+    aria-hidden="true"
+  >
+    <rect x="5.5" y="5.5" width="8" height="8" rx="1.5"></rect>
+    <path d="M10.5 3.5v-1a1 1 0 0 0-1-1h-7a1 1 0 0 0-1 1v7a1 1 0 0 0 1 1h1"></path>
+  </svg>
+  <span data-copy-label>{label}</span>
+</button>
+
+<script>
+  // One listener for every copy button on the page, added once.
+  if (navigator.clipboard) {
+    const buttons = document.querySelectorAll<HTMLButtonElement>('[data-copy]');
+    for (const button of buttons) {
+      button.classList.remove('hidden');
+      button.classList.add('inline-flex');
+      button.addEventListener('click', async () => {
+        const text = button.dataset.copy ?? '';
+        const label = button.querySelector<HTMLElement>('[data-copy-label]');
+        try {
+          await navigator.clipboard.writeText(text);
+        } catch {
+          return;
+        }
+        if (!label) return;
+        const original = button.dataset.label ?? '';
+        label.textContent = button.dataset.done ?? '';
+        button.classList.add('text-mint-400');
+        window.setTimeout(() => {
+          label.textContent = original;
+          button.classList.remove('text-mint-400');
+        }, 1600);
+      });
+    }
+  }
+</script>

@@ -1,0 +1,355 @@
+---
+import type { Lang } from '../lib/content';
+import { copy } from '../lib/content';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+const repo = 'https://github.com/asovetov/agents-room';
+const wiki = `${repo}/tree/main/docs/wiki`;
+---
+
+<section class="relative overflow-hidden">
+  <!-- A single soft light source behind the headline. Radial gradients are
+       cheap on the GPU and give the flat dark surface some depth without a
+       background image. -->
+  <div
+    class="pointer-events-none absolute inset-x-0 -top-40 h-[520px] opacity-60"
+    style="background: radial-gradient(ellipse 60% 50% at 50% 40%, rgba(245,158,11,0.14), transparent 70%);"
+    aria-hidden="true"
+  >
+  </div>
+
+  <div class="mx-auto max-w-6xl px-5 pt-20 pb-24 sm:px-8 sm:pt-28 sm:pb-32">
+    <div class="max-w-3xl" data-reveal>
+      <p
+        data-reveal-item
+        class="mb-6 inline-flex items-center gap-2 rounded-full border border-white/10 px-3 py-1 font-mono text-xs text-fog-300"
+      >
+        <span class="size-1.5 rounded-full bg-mint-400" aria-hidden="true"></span>
+        {t.hero.eyebrow}
+      </p>
+
+      <h1
+        data-reveal-item
+        class="text-[2.1rem] leading-[1.08] font-semibold text-balance sm:text-5xl lg:text-6xl"
+      >
+        {t.hero.headline}
+      </h1>
+
+      <p data-reveal-item class="mt-6 max-w-2xl text-lg leading-relaxed text-fog-300 sm:text-xl">
+        {t.hero.sub}
+      </p>
+
+      <div data-reveal-item class="mt-9 flex flex-wrap items-center gap-3">
+        <a href="#install" class="btn btn-primary">{t.hero.primary}</a>
+        <a href={wiki} target="_blank" rel="noopener" class="btn btn-ghost">
+          {t.hero.secondary}
+          <svg
+            class="size-3.5 opacity-60"
+            viewBox="0 0 12 12"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            aria-hidden="true"
+          >
+            <path d="M3.5 8.5 8.5 3.5M4.5 3.5h4v4"></path>
+          </svg>
+        </a>
+      </div>
+
+      <p data-reveal-item class="mt-6 font-mono text-xs text-fog-500">{t.hero.note}</p>
+    </div>
+
+    <!-- The diagram is the product in one glance: three repositories, one
+         meeting point, traffic that only exists because of it. It is drawn
+         in SVG rather than canvas so it stays sharp and needs no script to
+         render.
+
+         Two layouts, not one scaled down. A 900-unit wide drawing squeezed
+         into a 390 px phone puts its labels at about 5 px, which is not a
+         small diagram — it is an unreadable one. The narrow version drops
+         the harness column (those clients are listed as chips under Install)
+         and uses fewer, larger nodes. -->
+    <div class="mt-20 sm:mt-24" data-reveal data-reveal-delay="0.1">
+      <svg
+        data-reveal-item
+        viewBox="0 0 900 300"
+        class="mx-auto hidden w-full max-w-4xl sm:block"
+        role="img"
+        aria-label={lang === 'en'
+          ? 'Three repository rooms — api, web, mobile — each connected to one shared room, with messages travelling between them.'
+          : 'Три комнаты репозиториев — api, web, mobile — соединены с одной общей комнатой, между ними идут сообщения.'}
+      >
+        <defs>
+          <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.5"></stop>
+            <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.08"></stop>
+          </linearGradient>
+          <radialGradient id="hubGlow">
+            <stop offset="0%" stop-color="#ffb454" stop-opacity="0.28"></stop>
+            <stop offset="100%" stop-color="#ffb454" stop-opacity="0"></stop>
+          </radialGradient>
+        </defs>
+
+        <circle cx="450" cy="150" r="105" fill="url(#hubGlow)"></circle>
+
+        <g stroke="url(#edge)" stroke-width="1.25" fill="none" class="diagram-edges">
+          <path d="M170 78 C 300 78, 340 150, 450 150"></path>
+          <path d="M170 150 H 450"></path>
+          <path d="M170 222 C 300 222, 340 150, 450 150"></path>
+          <path d="M730 78 C 600 78, 560 150, 450 150"></path>
+          <path d="M730 150 H 450"></path>
+          <path d="M730 222 C 600 222, 560 150, 450 150"></path>
+        </g>
+
+        <!-- Nodes: repository rooms on the outside, the shared room in the
+             middle. -->
+        <g font-family="ui-monospace, monospace" font-size="13">
+          <g class="diagram-node">
+            <rect x="60" y="58" width="110" height="40" rx="8" fill="#101319" stroke="#232935"></rect>
+            <text x="115" y="83" text-anchor="middle" fill="#ccd2dc">repo:api</text>
+          </g>
+          <g class="diagram-node">
+            <rect x="60" y="130" width="110" height="40" rx="8" fill="#101319" stroke="#232935"></rect>
+            <text x="115" y="155" text-anchor="middle" fill="#ccd2dc">repo:web</text>
+          </g>
+          <g class="diagram-node">
+            <rect x="60" y="202" width="110" height="40" rx="8" fill="#101319" stroke="#232935"></rect>
+            <text x="115" y="227" text-anchor="middle" fill="#ccd2dc">repo:mobile</text>
+          </g>
+
+          <g class="diagram-node">
+            <rect x="730" y="58" width="110" height="40" rx="8" fill="#101319" stroke="#232935"></rect>
+            <text x="785" y="83" text-anchor="middle" fill="#ccd2dc">codex</text>
+          </g>
+          <g class="diagram-node">
+            <rect x="730" y="130" width="110" height="40" rx="8" fill="#101319" stroke="#232935"></rect>
+            <text x="785" y="155" text-anchor="middle" fill="#ccd2dc">hermes</text>
+          </g>
+          <g class="diagram-node">
+            <rect x="730" y="202" width="110" height="40" rx="8" fill="#101319" stroke="#232935"></rect>
+            <text x="785" y="227" text-anchor="middle" fill="#ccd2dc">mcp</text>
+          </g>
+
+          <g class="diagram-hub">
+            <rect
+              x="360"
+              y="124"
+              width="180"
+              height="52"
+              rx="12"
+              fill="#161a22"
+              stroke="#f59e0b"
+              stroke-opacity="0.45"></rect>
+            <text x="450" y="146" text-anchor="middle" fill="#ffc978" font-size="12">shared:</text>
+            <text x="450" y="163" text-anchor="middle" fill="#ffc978" font-size="12">storefront</text>
+          </g>
+        </g>
+
+        <!-- Packets. Three of them, each on its own path, offset in time by
+             the CSS animation-delay so the traffic never looks synchronised. -->
+        <g class="diagram-packets" fill="#ffb454">
+          <circle class="packet packet-a" cx="0" cy="0" r="3"></circle>
+          <circle class="packet packet-b" cx="0" cy="0" r="3"></circle>
+          <circle class="packet packet-c" cx="0" cy="0" r="3"></circle>
+        </g>
+      </svg>
+
+      <!-- Narrow layout: one column of repositories on the left, the shared
+           room on the right, three edges. Same idea, readable at 390 px. -->
+      <svg
+        data-reveal-item
+        viewBox="0 0 360 260"
+        class="mx-auto w-full max-w-sm sm:hidden"
+        role="img"
+        aria-label={lang === 'en'
+          ? 'Three repository rooms — api, web, mobile — connected to one shared room.'
+          : 'Три комнаты репозиториев — api, web, mobile — соединены с одной общей комнатой.'}
+      >
+        <!-- Own defs, not the wide diagram's. A gradient lives in the
+             document, but its owner <svg> is display:none at this width, and
+             a paint server inside a hidden subtree is not reliably
+             available — the edges simply did not render. -->
+        <defs>
+          <linearGradient id="edge-narrow" x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stop-color="#f59e0b" stop-opacity="0.08"></stop>
+            <stop offset="100%" stop-color="#f59e0b" stop-opacity="0.5"></stop>
+          </linearGradient>
+          <radialGradient id="hub-glow-narrow">
+            <stop offset="0%" stop-color="#ffb454" stop-opacity="0.28"></stop>
+            <stop offset="100%" stop-color="#ffb454" stop-opacity="0"></stop>
+          </radialGradient>
+        </defs>
+
+        <circle cx="272" cy="130" r="72" fill="url(#hub-glow-narrow)"></circle>
+
+        <g stroke="url(#edge-narrow)" stroke-width="1.25" fill="none">
+          <path d="M118 52 C 190 52, 200 130, 232 130"></path>
+          <path d="M118 130 H 232"></path>
+          <path d="M118 208 C 190 208, 200 130, 232 130"></path>
+        </g>
+
+        <g font-family="ui-monospace, monospace" font-size="11">
+          <g>
+            <rect x="12" y="34" width="106" height="36" rx="8" fill="#101319" stroke="#232935"></rect>
+            <text x="65" y="57" text-anchor="middle" fill="#ccd2dc">repo:api</text>
+          </g>
+          <g>
+            <rect x="12" y="112" width="106" height="36" rx="8" fill="#101319" stroke="#232935"></rect>
+            <text x="65" y="135" text-anchor="middle" fill="#ccd2dc">repo:web</text>
+          </g>
+          <g>
+            <rect x="12" y="190" width="106" height="36" rx="8" fill="#101319" stroke="#232935"></rect>
+            <text x="65" y="213" text-anchor="middle" fill="#ccd2dc">repo:mobile</text>
+          </g>
+
+          <g>
+            <rect
+              x="238"
+              y="104"
+              width="110"
+              height="52"
+              rx="10"
+              fill="#161a22"
+              stroke="#f59e0b"
+              stroke-opacity="0.45"></rect>
+            <text x="293" y="125" text-anchor="middle" fill="#ffc978" font-size="10">shared:</text>
+            <text x="293" y="141" text-anchor="middle" fill="#ffc978" font-size="10">storefront</text>
+          </g>
+        </g>
+
+        <g fill="#ffb454">
+          <circle class="packet-narrow packet-na" cx="0" cy="0" r="2.5"></circle>
+          <circle class="packet-narrow packet-nb" cx="0" cy="0" r="2.5"></circle>
+        </g>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<style>
+  /* The packets ride the same geometry as the edges by offsetting along a
+     path is not possible in plain CSS, so they animate on fixed transform
+     paths that match the two straight horizontal edges. The curved edges are
+     decorative; the visible traffic uses the lines that are easy to keep in
+     sync. */
+  .packet {
+    opacity: 0;
+  }
+
+  .packet-a {
+    animation: ride-left 4.2s var(--ease-out-expo) infinite;
+  }
+
+  .packet-b {
+    animation: ride-right 5.1s var(--ease-out-expo) 1.4s infinite;
+  }
+
+  .packet-c {
+    animation: ride-left 6.3s var(--ease-out-expo) 2.8s infinite;
+  }
+
+  @keyframes ride-left {
+    0% {
+      transform: translate(170px, 150px);
+      opacity: 0;
+    }
+    12% {
+      opacity: 1;
+    }
+    85% {
+      opacity: 1;
+    }
+    100% {
+      transform: translate(440px, 150px);
+      opacity: 0;
+    }
+  }
+
+  @keyframes ride-right {
+    0% {
+      transform: translate(730px, 150px);
+      opacity: 0;
+    }
+    12% {
+      opacity: 1;
+    }
+    85% {
+      opacity: 1;
+    }
+    100% {
+      transform: translate(460px, 150px);
+      opacity: 0;
+    }
+  }
+
+  .diagram-hub rect {
+    animation: hub-pulse 4s ease-in-out infinite;
+  }
+
+  .packet-narrow {
+    animation: ride-narrow 5s var(--ease-out-expo) infinite;
+  }
+
+  .packet-nb {
+    animation-delay: 2.4s;
+  }
+
+  @keyframes ride-narrow {
+    0% {
+      transform: translate(118px, 130px);
+      opacity: 0;
+    }
+    12% {
+      opacity: 1;
+    }
+    85% {
+      opacity: 1;
+    }
+    100% {
+      transform: translate(230px, 130px);
+      opacity: 0;
+    }
+  }
+
+  @keyframes hub-pulse {
+    0%,
+    100% {
+      stroke-opacity: 0.45;
+    }
+    50% {
+      stroke-opacity: 0.85;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .packet {
+      animation: none;
+      opacity: 0.6;
+    }
+    .packet-a {
+      transform: translate(300px, 150px);
+    }
+    .packet-b {
+      transform: translate(600px, 150px);
+    }
+    .packet-c {
+      transform: translate(400px, 150px);
+    }
+    .diagram-hub rect {
+      animation: none;
+    }
+    .packet-narrow {
+      animation: none;
+      opacity: 0.6;
+      transform: translate(175px, 130px);
+    }
+    .packet-nb {
+      transform: translate(210px, 130px);
+    }
+  }
+</style>

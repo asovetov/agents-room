@@ -1,0 +1,33 @@
+---
+import Section from './Section.astro';
+import type { Lang } from '../lib/content';
+import { copy } from '../lib/content';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+---
+
+<Section id="features" eyebrow={t.features.eyebrow} title={t.features.title} lead={t.features.lead}>
+  <div class="grid gap-px overflow-hidden rounded-xl bg-white/[0.06] sm:grid-cols-2 lg:grid-cols-3">
+    {
+      t.features.items.map((item, i) => (
+        <article
+          data-reveal
+          data-reveal-delay={String((i % 3) * 0.06)}
+          class="group bg-ink-950 p-6 transition-colors duration-300 hover:bg-ink-900"
+        >
+          <h3 data-reveal-item class="text-base font-medium text-fog-100">
+            {item.title}
+          </h3>
+          <p data-reveal-item class="mt-2.5 text-sm leading-relaxed text-fog-400">
+            {item.body}
+          </p>
+        </article>
+      ))
+    }
+  </div>
+</Section>

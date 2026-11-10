@@ -1,0 +1,34 @@
+---
+// Shared shell for every section below the hero: consistent rhythm, a small
+// eyebrow label, and the same reveal grouping.
+interface Props {
+  id: string;
+  eyebrow: string;
+  title: string;
+  lead?: string;
+  class?: string;
+}
+
+const { id, eyebrow, title, lead, class: className = '' } = Astro.props;
+---
+
+<section id={id} class:list={['relative scroll-mt-24', className]}>
+  <div class="mx-auto max-w-6xl px-5 py-20 sm:px-8 sm:py-28">
+    <header class="max-w-2xl" data-reveal>
+      <p data-reveal-item class="mb-3 font-mono text-xs tracking-wider text-amber-400/80 uppercase">
+        {eyebrow}
+      </p>
+      <h2 data-reveal-item class="text-3xl font-semibold sm:text-4xl">{title}</h2>
+      {
+        lead && (
+          <p data-reveal-item class="mt-4 text-base leading-relaxed text-fog-400 sm:text-lg">
+            {lead}
+          </p>
+        )
+      }
+    </header>
+    <div class="mt-12">
+      <slot />
+    </div>
+  </div>
+</section>

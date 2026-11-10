@@ -1,0 +1,48 @@
+---
+import Section from './Section.astro';
+import CopyButton from './CopyButton.astro';
+import type { Lang } from '../lib/content';
+import { copy } from '../lib/content';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+const copyLabel = lang === 'ru' ? 'копировать' : 'copy';
+const copiedLabel = lang === 'ru' ? 'скопировано' : 'copied';
+---
+
+<Section id="how" eyebrow={t.how.eyebrow} title={t.how.title} lead={t.how.lead}>
+  <!-- min-w-0 on the track and the card: a grid item's automatic minimum is
+       its content, and one long unbreakable command would otherwise widen
+       the column past the screen instead of scrolling inside its own box. -->
+  <ol class="grid min-w-0 gap-4 sm:grid-cols-3">
+    {
+      t.how.steps.map((step, i) => (
+        <li
+          data-reveal
+          data-reveal-delay={String(i * 0.08)}
+          class="card flex min-w-0 flex-col rounded-xl p-5"
+        >
+          <span data-reveal-item class="font-mono text-xs text-amber-400/70">
+            {String(i + 1).padStart(2, '0')}
+          </span>
+          <h3 data-reveal-item class="mt-3 text-lg font-medium">
+            {step.title}
+          </h3>
+          <p data-reveal-item class="mt-2 flex-1 text-sm leading-relaxed text-fog-400">
+            {step.body}
+          </p>
+          <div data-reveal-item class="mt-5 -mx-1 flex min-w-0 items-start gap-1 rounded-lg bg-ink-900/80 p-1">
+            <code class="min-w-0 flex-1 overflow-x-auto px-2 py-1.5 font-mono text-[11.5px] whitespace-pre text-fog-200">
+              {step.command}
+            </code>
+            <CopyButton text={step.command} label={copyLabel} done={copiedLabel} />
+          </div>
+        </li>
+      ))
+    }
+  </ol>
+</Section>

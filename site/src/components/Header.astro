@@ -1,0 +1,46 @@
+---
+import type { Lang } from '../lib/content';
+import { copy } from '../lib/content';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const otherHref = lang === 'en' ? `${base}/ru/` : `${base}/`;
+const otherLabel = lang === 'en' ? 'RU' : 'EN';
+const repo = 'https://github.com/asovetov/agents-room';
+---
+
+<header class="sticky top-0 z-40 border-b border-white/[0.06] bg-ink-950/80 backdrop-blur-xl">
+  <div class="mx-auto flex h-16 max-w-6xl items-center gap-6 px-5 sm:px-8">
+    <a href={lang === 'en' ? `${base}/` : `${base}/ru/`} class="group flex items-center gap-2.5">
+      <span
+        class="grid size-7 place-items-center rounded-md bg-amber-400 text-[13px] font-bold text-ink-950 transition-transform duration-300 group-hover:rotate-6"
+        aria-hidden="true">ar</span
+      >
+      <span class="font-mono text-sm font-medium tracking-tight text-fog-100">agents-room</span>
+    </a>
+
+    <nav class="ml-auto hidden items-center gap-7 text-sm text-fog-400 sm:flex" aria-label="Main">
+      <a href="#how" class="transition-colors hover:text-fog-100">{t.nav.how}</a>
+      <a href="#features" class="transition-colors hover:text-fog-100">{t.nav.features}</a>
+      <a href="#install" class="transition-colors hover:text-fog-100">{t.nav.install}</a>
+      <a
+        href={repo}
+        class="transition-colors hover:text-fog-100"
+        rel="noopener"
+        target="_blank">{t.nav.github}</a
+      >
+    </nav>
+
+    <a
+      href={otherHref}
+      data-lang-switch
+      class="ml-auto rounded-md border border-white/10 px-2.5 py-1 font-mono text-xs text-fog-300 transition-colors hover:border-white/25 hover:text-fog-100 sm:ml-0"
+      aria-label={lang === 'en' ? 'Переключить на русский' : 'Switch to English'}>{otherLabel}</a
+    >
+  </div>
+</header>

@@ -1,0 +1,34 @@
+---
+// The whole page body for one language. Both routes render this, so a change
+// to the layout or the section order happens once.
+import Header from './Header.astro';
+import Hero from './Hero.astro';
+import Problem from './Problem.astro';
+import How from './How.astro';
+import Features from './Features.astro';
+import Install from './Install.astro';
+import Footer from './Footer.astro';
+import type { Lang } from '../lib/content';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+---
+
+<Header lang={lang} />
+<main id="main">
+  <Hero lang={lang} />
+  <Problem lang={lang} />
+  <How lang={lang} />
+  <Features lang={lang} />
+  <Install lang={lang} />
+</main>
+<Footer lang={lang} />
+
+<script>
+  import { reveal } from '../lib/reveal';
+
+  reveal();
+</script>

@@ -1,0 +1,61 @@
+---
+import Section from './Section.astro';
+import CopyButton from './CopyButton.astro';
+import type { Lang } from '../lib/content';
+import { copy } from '../lib/content';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+const copyLabel = lang === 'ru' ? 'копировать' : 'copy';
+const copiedLabel = lang === 'ru' ? 'скопировано' : 'copied';
+---
+
+<Section id="install" eyebrow={t.install.eyebrow} title={t.install.title}>
+  <div class="grid gap-10 lg:grid-cols-[1fr_1.15fr] lg:items-start lg:gap-16">
+    <div data-reveal>
+      <p data-reveal-item class="text-base leading-relaxed text-fog-300 sm:text-[17px]">
+        {t.install.body}
+      </p>
+      <p data-reveal-item class="mt-4 text-sm leading-relaxed text-fog-500">
+        {t.install.note}
+      </p>
+    </div>
+
+    <div data-reveal data-reveal-delay="0.08" class="terminal min-w-0 overflow-hidden">
+      <div data-reveal-item class="flex items-center gap-1.5 border-b border-white/[0.06] px-4 py-2.5">
+        <span class="size-2.5 rounded-full bg-white/10"></span>
+        <span class="size-2.5 rounded-full bg-white/10"></span>
+        <span class="size-2.5 rounded-full bg-white/10"></span>
+        <span class="ml-2 font-mono text-[11px] text-fog-500">bash</span>
+        <div class="ml-auto">
+          <CopyButton text={t.install.command} label={copyLabel} done={copiedLabel} />
+        </div>
+      </div>
+      <div data-reveal-item class="overflow-x-auto px-4 py-4">
+        <pre class="text-fog-200"><code><span class="text-fog-500 select-none">$ </span>{t.install.command}</code></pre>
+      </div>
+    </div>
+  </div>
+
+  <!-- Compatibility sits under install rather than in its own section: it is
+       a one-line reassurance, not a claim that needs a heading. -->
+  <div class="mt-16 border-t border-white/[0.06] pt-10" data-reveal>
+    <p data-reveal-item class="font-mono text-xs tracking-wider text-fog-500 uppercase">
+      {t.compat.title}
+    </p>
+    <p data-reveal-item class="mt-3 max-w-xl text-sm text-fog-400">{t.compat.body}</p>
+    <ul data-reveal-item class="mt-5 flex flex-wrap gap-2">
+      {
+        t.compat.items.map((item) => (
+          <li class="rounded-md border border-white/10 px-2.5 py-1 font-mono text-xs text-fog-300">
+            {item}
+          </li>
+        ))
+      }
+    </ul>
+  </div>
+</Section>

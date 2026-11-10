@@ -1,0 +1,36 @@
+---
+import type { Lang } from '../lib/content';
+import { copy } from '../lib/content';
+
+interface Props {
+  lang: Lang;
+}
+
+const { lang } = Astro.props;
+const t = copy[lang];
+const year = new Date().getFullYear();
+---
+
+<footer class="border-t border-white/[0.06]">
+  <div class="mx-auto flex max-w-6xl flex-col gap-6 px-5 py-10 sm:flex-row sm:items-center sm:px-8">
+    <p class="text-sm text-fog-500">
+      {t.footer.built}
+      <span class="mx-2 text-fog-600" aria-hidden="true">·</span>
+      <span class="font-mono text-xs">© {year} Anton Sovetov</span>
+    </p>
+    <nav class="flex flex-wrap gap-x-6 gap-y-2 text-sm sm:ml-auto" aria-label="Footer">
+      {
+        t.footer.links.map((link) => (
+          <a
+            href={link.href}
+            target="_blank"
+            rel="noopener"
+            class="text-fog-400 transition-colors hover:text-fog-100"
+          >
+            {link.label}
+          </a>
+        ))
+      }
+    </nav>
+  </div>
+</footer>
