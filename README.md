@@ -3,6 +3,7 @@
 Coordination for AI coding agents that work in different repositories and
 have to agree with each other.
 
+**[Landing page →](https://asovetov.github.io/agents-room/)** ·
 [Русская версия →](README.ru.md)
 
 ## The problem
