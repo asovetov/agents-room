@@ -16,8 +16,8 @@ const copiedLabel = lang === 'ru' ? 'скопировано' : 'copied';
 
 <Section id="how" eyebrow={t.how.eyebrow} title={t.how.title} lead={t.how.lead}>
   <!-- min-w-0 on the track and the card: a grid item's automatic minimum is
-       its content, and one long unbreakable command would otherwise widen
-       the column past the screen instead of scrolling inside its own box. -->
+       its content, so a long command would widen the column past the screen
+       instead of wrapping inside its own box. -->
   <ol class="grid min-w-0 gap-4 sm:grid-cols-3">
     {
       t.how.steps.map((step, i) => (
@@ -35,8 +35,22 @@ const copiedLabel = lang === 'ru' ? 'скопировано' : 'copied';
           <p data-reveal-item class="mt-2 flex-1 text-sm leading-relaxed text-fog-400">
             {step.body}
           </p>
-          <div data-reveal-item class="mt-5 -mx-1 flex min-w-0 items-start gap-1 rounded-lg bg-ink-900/80 p-1">
-            <code class="min-w-0 flex-1 overflow-x-auto px-2 py-1.5 font-mono text-[11.5px] whitespace-pre text-fog-200">
+          <!-- A shell line, not a scrolled box. These commands are longer
+               than the column, and a horizontal scrollbar inside a card is
+               a control nobody wants to use to read four words. The prompt
+               sits in its own column and the command wraps under a hanging
+               indent, so a wrapped line still reads as a continuation of
+               one command rather than as a broken layout. -->
+          <div
+            data-reveal-item
+            class="mt-5 -mx-1 flex min-w-0 gap-2 rounded-lg bg-ink-900/80 px-3 py-2.5"
+          >
+            <span class="shrink-0 font-mono text-[11.5px] leading-relaxed text-fog-500 select-none" aria-hidden="true"
+              >$</span
+            >
+            <code
+              class="min-w-0 flex-1 font-mono text-[11.5px] leading-relaxed break-words whitespace-pre-wrap text-fog-200"
+            >
               {step.command}
             </code>
             <CopyButton text={step.command} label={copyLabel} done={copiedLabel} />
