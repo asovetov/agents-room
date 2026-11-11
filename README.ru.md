@@ -3,8 +3,31 @@
 Координация ИИ-агентов, которые работают в разных репозиториях и должны
 договариваться друг с другом.
 
+[![CI](https://github.com/asovetov/agents-room/actions/workflows/ci.yml/badge.svg)](https://github.com/asovetov/agents-room/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/asovetov/agents-room?sort=semver)](https://github.com/asovetov/agents-room/releases)
+[![license](https://img.shields.io/github/license/asovetov/agents-room)](LICENSE)
+[![go](https://img.shields.io/github/go-mod/go-version/asovetov/agents-room)](go.mod)
+[![Go Report Card](https://goreportcard.com/badge/github.com/asovetov/agents-room)](https://goreportcard.com/report/github.com/asovetov/agents-room)
+
+![три репозитория, одна общая комната](docs/assets/demo.gif)
+
 **[Сайт проекта →](https://asovetov.github.io/agents-room/ru/)** ·
 [English version →](README.md)
+
+## Попробовать за 60 секунд
+
+```bash
+GOBIN=~/.local/bin go install github.com/asovetov/agents-room/cmd/agents-room@latest
+agents-room doctor --fix    # подключит MCP-сервер и хуки к тому, что найдёт
+```
+
+Дальше — из двух чекаутов одного продукта:
+
+```bash
+cd ~/src/api    && agents-room join --also shared:storefront --label "users API"
+cd ~/src/mobile && agents-room join --also shared:storefront --label "mobile app"
+agents-room who --room shared:storefront
+```
 
 ## Проблема
 
@@ -33,9 +56,10 @@ agents-room — тот слой, которого не хватает. Он по
 - **Моё чтение ещё верно?** Предупреждение, если файл изменился под вами.
 
 И он доставляет сообщения по адресу «что», а не «кто»:
-`file:src/api/users.go` дойдёт до того, кто держит этот файл, в каком бы
-репозитории он ни сидел; `tag:mobile` — до всех, кто работает над мобильным
-клиентом.
+`file:/home/you/src/api/src/api/users.go` дойдёт до того, кто держит этот
+файл, в каком бы репозитории он ни был; `tag:mobile` — до всех, кто занят
+мобильным клиентом. Шаблон `file:` сверяется с чекаутом каждого держателя,
+поэтому файл вне репозитория отправителя называется абсолютным путём.
 
 То же работает и внутри одного репозитория, когда несколько сессий делят
 кодовую базу. Это более простой случай, и он достаётся бесплатно.
@@ -43,15 +67,19 @@ agents-room — тот слой, которого не хватает. Он по
 ## Сессия за тридцать секунд
 
 ```bash
+API=~/src/api          # чекаут, до которого нужно дотянуться из mobile
+
 # В репозитории api: войти в комнату, общую для трёх проектов.
 agents-room join --also shared:storefront --label "users API" --tag backend
 
-# В репозитории mobile: спросить того, кто держит эндпоинт.
-agents-room send --session $ID --to file:src/api/users.go \
-  --subject "нужно поле phone" --body "для экрана профиля"
-
 # Агент в api занимает файл перед правкой, чтобы это видели остальные.
-agents-room lease claim --session $ID --path src/api/users.go
+agents-room lease claim --session $ID --path "$API/src/api/users.go"
+
+# В репозитории mobile: спросить того, кто держит эндпоинт.
+# Селектор file: сверяется с чекаутом каждого держателя, поэтому файл в другом
+# репозитории называется абсолютным путём.
+agents-room send --session $ID --to "file:$API/src/api/users.go" \
+  --subject "нужно поле phone" --body "для экрана профиля"
 ```
 
 Это весь цикл. Всё остальное — MCP-инструменты, хуки харнессов, уровни
@@ -214,7 +242,13 @@ GOBIN=~/.local/bin go install github.com/asovetov/agents-room/cmd/agents-room@la
 
 ### Claude Code
 
-MCP-сервер, в `~/.claude.json` или в проектном `.mcp.json`:
+Плагин несёт MCP-сервер и хуки одним пакетом:
+
+```text
+/plugin install agents-room --marketplace asovetov/agents-room
+```
+
+Вручную — MCP-сервер, в `~/.claude.json` или в проектном `.mcp.json`:
 
 ```json
 {

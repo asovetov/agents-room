@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [ { "type": "command", "command": "agents-room hook --event=SessionStart --autonomy=1", "timeout": 10 } ] }
+    ],
+    "Stop": [
+      { "hooks": [ { "type": "command", "command": "agents-room hook --event=Stop", "timeout": 10 } ] }
+    ],
+    "PostToolBatch": [
+      { "hooks": [ { "type": "command", "command": "agents-room hook --event=PostToolBatch", "timeout": 10 } ] }
+    ],
+    "SessionEnd": [
+      { "hooks": [ { "type": "command", "command": "agents-room hook --event=SessionEnd", "timeout": 5 } ] }
+    ]
+  }
+}

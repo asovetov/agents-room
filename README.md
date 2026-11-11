@@ -3,8 +3,31 @@
 Coordination for AI coding agents that work in different repositories and
 have to agree with each other.
 
+[![CI](https://github.com/asovetov/agents-room/actions/workflows/ci.yml/badge.svg)](https://github.com/asovetov/agents-room/actions/workflows/ci.yml)
+[![release](https://img.shields.io/github/v/release/asovetov/agents-room?sort=semver)](https://github.com/asovetov/agents-room/releases)
+[![license](https://img.shields.io/github/license/asovetov/agents-room)](LICENSE)
+[![go](https://img.shields.io/github/go-mod/go-version/asovetov/agents-room)](go.mod)
+[![Go Report Card](https://goreportcard.com/badge/github.com/asovetov/agents-room)](https://goreportcard.com/report/github.com/asovetov/agents-room)
+
+![three repositories, one shared room](docs/assets/demo.gif)
+
 **[Landing page →](https://asovetov.github.io/agents-room/)** ·
 [Русская версия →](README.ru.md)
+
+## Try it in 60 seconds
+
+```bash
+GOBIN=~/.local/bin go install github.com/asovetov/agents-room/cmd/agents-room@latest
+agents-room doctor --fix    # wires the MCP server and the hooks into what it finds
+```
+
+Then, from two checkouts of the same product:
+
+```bash
+cd ~/src/api    && agents-room join --also shared:storefront --label "users API"
+cd ~/src/mobile && agents-room join --also shared:storefront --label "mobile app"
+agents-room who --room shared:storefront
+```
 
 ## The problem
 
@@ -33,9 +56,11 @@ It answers three questions the harnesses do not:
 - **Is my read still valid?** A warning when a file changed under you.
 
 It also delivers messages addressed by *what* rather than *who*:
-`file:src/api/users.go` reaches whoever holds that file, in whatever
-repository they sit; `tag:mobile` reaches everyone working on the mobile
-client.
+`file:/home/you/src/api/src/api/users.go` reaches whoever holds that file, in
+whatever repository they sit; `tag:mobile` reaches everyone working on the
+mobile client. A `file:` pattern is matched against each holder's own
+checkout, so a file outside the sender's repository is named by its absolute
+path.
 
 The same works inside one repository, when several sessions share a codebase.
 That is the simpler case, and it comes for free.
@@ -43,15 +68,19 @@ That is the simpler case, and it comes for free.
 ## A session, in thirty seconds
 
 ```bash
+API=~/src/api          # the checkout the mobile agent has to reach
+
 # In the api repository: join the room the three projects share.
 agents-room join --also shared:storefront --label "users API" --tag backend
 
-# In the mobile repository: ask whoever holds the users endpoint.
-agents-room send --session $ID --to file:src/api/users.go \
-  --subject "need a phone field" --body "for the profile screen"
-
 # The api agent claims the file before editing, so the others can see it.
-agents-room lease claim --session $ID --path src/api/users.go
+agents-room lease claim --session $ID --path "$API/src/api/users.go"
+
+# In the mobile repository: ask whoever holds the users endpoint.
+# A file: selector is matched against each holder's own checkout, so a file in
+# another repository has to be named by its absolute path.
+agents-room send --session $ID --to "file:$API/src/api/users.go" \
+  --subject "need a phone field" --body "for the profile screen"
 ```
 
 That is the whole loop. Everything else — MCP tools, harness hooks, autonomy
@@ -214,7 +243,13 @@ mcp`), and the harness hook (`agents-room hook`). Nothing else to install.
 
 ### Claude Code
 
-MCP server, in `~/.claude.json` or the project `.mcp.json`:
+The plugin carries the MCP server and the hooks in one package:
+
+```text
+/plugin install agents-room --marketplace asovetov/agents-room
+```
+
+By hand instead — MCP server, in `~/.claude.json` or the project `.mcp.json`:
 
 ```json
 {

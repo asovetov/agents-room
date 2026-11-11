@@ -1,0 +1,14 @@
+{
+  "name": "agents-room",
+  "description": "Cross-repository coordination for coding agents",
+  "owner": {
+    "name": "Anton Sovetov"
+  },
+  "plugins": [
+    {
+      "name": "agents-room",
+      "source": "./",
+      "description": "Shared rooms, file leases and file:-addressed messages for coding agents in different repositories."
+    }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "name": "agents-room",
+  "version": "0.6.8",
+  "description": "Coordination for AI coding agents in different repositories: shared rooms, file leases, and messages addressed by file: or tag:.",
+  "author": {
+    "name": "Anton Sovetov",
+    "url": "https://github.com/asovetov"
+  },
+  "homepage": "https://asovetov.github.io/agents-room/",
+  "repository": "https://github.com/asovetov/agents-room",
+  "license": "GPL-3.0",
+  "keywords": ["mcp", "agents", "coordination", "claude-code", "leases"]
+}
