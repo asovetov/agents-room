@@ -47,7 +47,7 @@ agents-room join --room repo:api --also storefront --label api --autonomy 2
 
 ```bash
 agents-room send --session 4f1c8a2b9d3e7f01 \
-  --to file:src/api/users.go \
+  --to file:api:src/api/users.go \
   --subject "нужно поле phone" \
   --body "Бот должен отправлять номер телефона. Эндпоинт пользователя его примет?"
 ```
@@ -59,6 +59,7 @@ agents-room send --session 4f1c8a2b9d3e7f01 \
 | `*` | все сессии в ваших комнатах, кроме вас |
 | `<session-id>` | одна сессия |
 | `file:<glob>` | сессии, держащие живую лизу по шаблону |
+| `file:<repo>:<path>` | то же в другом репозитории: `file:api:src/api/users.go` читает путь от чекаута api |
 | `tag:<tag>` | сессии, вошедшие с этим тегом |
 
 ## Чтение

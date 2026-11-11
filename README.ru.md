@@ -56,10 +56,10 @@ agents-room — тот слой, которого не хватает. Он по
 - **Моё чтение ещё верно?** Предупреждение, если файл изменился под вами.
 
 И он доставляет сообщения по адресу «что», а не «кто»:
-`file:/home/you/src/api/src/api/users.go` дойдёт до того, кто держит этот
-файл, в каком бы репозитории он ни был; `tag:mobile` — до всех, кто занят
-мобильным клиентом. Шаблон `file:` сверяется с чекаутом каждого держателя,
-поэтому файл вне репозитория отправителя называется абсолютным путём.
+`file:src/api/users.go` дойдёт до того, кто держит этот файл в вашем
+репозитории, а `file:api:src/api/users.go` — до держателя в другом, если
+написать путь так, как он выглядит там; `tag:mobile` — до всех, кто работает
+над мобильным клиентом.
 
 То же работает и внутри одного репозитория, когда несколько сессий делят
 кодовую базу. Это более простой случай, и он достаётся бесплатно.
@@ -67,18 +67,15 @@ agents-room — тот слой, которого не хватает. Он по
 ## Сессия за тридцать секунд
 
 ```bash
-API=~/src/api          # чекаут, до которого нужно дотянуться из mobile
-
 # В репозитории api: войти в комнату, общую для трёх проектов.
 agents-room join --also shared:storefront --label "users API" --tag backend
 
 # Агент в api занимает файл перед правкой, чтобы это видели остальные.
-agents-room lease claim --session $ID --path "$API/src/api/users.go"
+agents-room lease claim --session $ID --path src/api/users.go
 
 # В репозитории mobile: спросить того, кто держит эндпоинт.
-# Селектор file: сверяется с чекаутом каждого держателя, поэтому файл в другом
-# репозитории называется абсолютным путём.
-agents-room send --session $ID --to "file:$API/src/api/users.go" \
+# file:<repo>:<path> читает путь от чекаута указанного репозитория.
+agents-room send --session $ID --to file:api:src/api/users.go \
   --subject "нужно поле phone" --body "для экрана профиля"
 ```
 
@@ -309,7 +306,7 @@ agents-room join --also shared:storefront    # встретить агентов
 agents-room who                              # сессии, с живостью
 agents-room cap --set 1                      # потолок автономии на всю комнату
 agents-room lease claim --session $ID --path src/api/users.go --ttl 600
-agents-room send --session $ID --to file:src/api/users.go --subject "нужно поле phone"
+agents-room send --session $ID --to file:api:src/api/users.go --subject "нужно поле phone"
 agents-room sent --session $ID               # что стало с отправленным
 agents-room history --room shared:storefront # что решили до вашего прихода
 agents-room recv --session $ID

@@ -20,8 +20,9 @@ It answers three questions that no harness answers today:
 3. **Is my read still valid?** Drift warnings when a file changed under you.
 
 It also delivers messages addressed by *what* rather than *who*:
-`file:src/api/users.go` reaches whoever holds that file, in whatever
-repository; `tag:mobile` reaches everyone working on the mobile client.
+`file:src/api/users.go` reaches whoever holds that file in your repository,
+`file:api:src/api/users.go` reaches the holder in another one, and
+`tag:mobile` reaches everyone working on the mobile client.
 
 The single-repository case, several sessions on one codebase, works the same
 way and comes for free.
@@ -113,11 +114,13 @@ The body arrives as a tool result, which keeps context small and makes
 | `*` | every session in the room except the sender |
 | `<session-id>` | one session |
 | `file:<glob>` | sessions holding a lease matching the glob |
+| `file:<repo>:<path>` | sessions in `repo:<repo>` holding a lease matching `path`, read from that repository's checkout |
 | `tag:<tag>` | sessions whose join tags include the tag |
 
 `file:` and `tag:` are the differentiators: nobody else answers "who is
 touching `src/api/users.go`", and nobody answers it across repositories at
-all.
+all. `file:<repo>:<path>` is how that cross-repository answer is written
+without an absolute path.
 
 ## MCP tools
 

@@ -150,6 +150,7 @@ no-op.
 | `*` | every session in the room except the sender |
 | `<session-id>` | one session; an unknown id is an error, not silence |
 | `file:<glob>` | sessions holding a live lease matching the glob |
+| `file:<repo>:<path>` | sessions in `repo:<repo>` holding a lease matching `path`, read from that repository's checkout |
 | `tag:<tag>` | sessions that joined with that tag |
 
 Paths are normalised to absolute form before they are stored, so
@@ -161,6 +162,24 @@ the bare base name.
 The holder's directory is the anchor, not the room's: a shared room can hold
 sessions from several repositories, and `src/wire.go` means a different file
 in each of them.
+
+That anchor is why the plain form cannot reach another repository: the same
+relative string names a different absolute file in each checkout. The
+qualified form says which checkout it means, so an agent in `mobile` writes
+the path as it appears in `api`'s tree:
+
+```bash
+agents-room send --session $ID --to file:api:src/api/users.go --subject "need a phone field"
+```
+
+`<repo>` is the repository room's name without its `repo:` prefix. It is
+taken as a repository only when a room `repo:<repo>` exists; otherwise the
+first colon is part of the path, so `file:C:/src/wire.go` keeps meaning a
+Windows path and an ordinary name containing a colon is not split. The
+qualifier selects which holders are meant, not which are reachable: the
+holder still has to share a room with the sender, so an agent that never met
+the other repository still reaches nobody. An absolute path continues to
+work and reaches the same holder.
 
 Lease contention is between sessions, not between room rows. A claim checks
 every session that shares at least one room with the claimant, so two agents
@@ -272,8 +291,8 @@ refusing, because cross-repository leases are exactly what the tool is for:
 - `lease_claim` warns when the claimed path is outside the caller's own
   directory.
 - `msg_send` warns when a `file:` selector matched nobody, names the absolute
-  path the pattern meant from the sender's directory, and says to use the
-  absolute path to reach another repository.
+  path the pattern meant from the sender's directory, and says to use
+  `file:<repo>:<path>` or the absolute path to reach another repository.
 
 ## Delivery states
 

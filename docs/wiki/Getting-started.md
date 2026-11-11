@@ -46,7 +46,7 @@ prefix is added when it is missing.
 
 ```bash
 agents-room send --session 4f1c8a2b9d3e7f01 \
-  --to file:src/api/users.go \
+  --to file:api:src/api/users.go \
   --subject "need a phone field" \
   --body "The bot has to send a phone number. Can the user endpoint take one?"
 ```
@@ -58,6 +58,7 @@ Selectors:
 | `*` | every session in your rooms except you |
 | `<session-id>` | one session |
 | `file:<glob>` | sessions holding a live lease matching the glob |
+| `file:<repo>:<path>` | the same, in another repository: `file:api:src/api/users.go` reads the path from api's checkout |
 | `tag:<tag>` | sessions that joined with that tag |
 
 ## Reading

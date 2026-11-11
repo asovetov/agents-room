@@ -109,7 +109,7 @@ Usage:
   agents-room doctor                     report what is installed and wired up
   agents-room path
 
-Selectors for --to: * | <session-id> | file:<glob> | tag:<tag>
+Selectors for --to: * | <session-id> | file:<glob> | file:<repo>:<path> | tag:<tag>
 Autonomy: 0 notify, 1 hold, 2 wake.
 `)
 }
@@ -299,7 +299,7 @@ func runSend(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("send", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	session := fs.String("session", "", "sender session id")
-	to := fs.String("to", "*", "selector: * | <session-id> | file:<glob> | tag:<tag>")
+	to := fs.String("to", "*", "selector: * | <session-id> | file:<glob> | file:<repo>:<path> | tag:<tag>")
 	subject := fs.String("subject", "", "subject")
 	body := fs.String("body", "", "body")
 	ttl := fs.Int64("ttl", 0, "time to live in seconds")

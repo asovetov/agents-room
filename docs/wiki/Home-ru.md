@@ -46,7 +46,8 @@ repo:bot ──┘
 
 ```bash
 agents-room join --room repo:api --also storefront --label api --autonomy 2
-agents-room send --session $ID --to file:src/api/users.go --subject "нужно поле phone"
+# Из другого репозитория файл называется от его чекаута:
+agents-room send --session $ID --to file:api:src/api/users.go --subject "нужно поле phone"
 agents-room recv --session $ID
 agents-room history --room shared:storefront
 ```

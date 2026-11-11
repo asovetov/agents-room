@@ -86,6 +86,7 @@ Lowering is the operator's decision and has one route: the room cap.
 | `*` | every session in the room except the sender |
 | `<session-id>` | one session; an unknown id is an error, not silence |
 | `file:<glob>` | sessions holding a live lease matching the glob |
+| `file:<repo>:<path>` | sessions in `repo:<repo>` holding a lease matching `path`, read from that repository's checkout |
 | `tag:<tag>` | sessions that joined with that tag |
 
 Paths are normalised to absolute form before they are stored, so
@@ -96,7 +97,10 @@ bare base name.
 
 The holder's directory is the anchor, not the room's: a shared room can hold
 sessions from several repositories, and `src/wire.go` means a different file
-in each of them.
+in each of them. That is why the plain form cannot reach another repository;
+`file:api:src/api/users.go` says which checkout is meant, and the first
+segment is a repository name only when that room exists. The holder still has
+to share a room with you, and an absolute path works as before.
 
 A selector that matches nobody is not an error: a broadcast in a room of one
 is a legitimate send with zero recipients. The count is reported back, so a

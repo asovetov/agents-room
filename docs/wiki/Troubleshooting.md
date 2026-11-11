@@ -122,6 +122,20 @@ The fix keeps the session carrying the harness key, or the oldest one when
 none does, and moves any message the removed row still had unread to the
 session that survives.
 
+## "A `file:` message reached nobody"
+
+A relative pattern is read from each holder's own checkout, so the same
+string names a different file in every repository. The warning names the
+absolute path the pattern meant; the cross-repository form is:
+
+```bash
+agents-room send --session $ID --to file:api:src/api/users.go --subject "x"
+```
+
+The first segment is a repository name only when a room `repo:<name>` exists,
+so a Windows drive letter is still a path. A qualified selector does not make
+an agent reachable: the holder must still share a room with you.
+
 ## "Two rooms that should be one"
 
 A room joined without its `shared:` prefix is a different room, so two sets of

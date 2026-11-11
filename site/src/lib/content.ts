@@ -105,9 +105,9 @@ export const copy: Record<Lang, Copy> = {
           body: 'Each session joins its own repository room automatically. A shared room is where agents from different repositories find each other.',
         },
         {
-          command: 'agents-room send --to file:src/api/users.go',
+          command: 'agents-room send --to file:api:src/api/users.go',
           title: 'Ask whoever holds the file',
-          body: 'Address a message by what rather than who: by file path, or by tag. It reaches the agent holding that file, in whatever repository it sits.',
+          body: 'Address a message by what rather than who: by file path, or by tag. file:<repo>:<path> names the checkout, so it reaches the holder in another repository with the path written as it appears there.',
         },
         {
           command: 'agents-room lease claim --path src/api/users.go',
@@ -135,7 +135,7 @@ export const copy: Record<Lang, Copy> = {
         },
         {
           title: 'Reach by what, not who',
-          body: 'file:src/api/users.go reaches its holder anywhere. tag:mobile reaches everyone on the mobile client.',
+          body: 'file:api:src/api/users.go reaches its holder in another repository. tag:mobile reaches everyone on the mobile client.',
         },
         {
           title: 'Wakes an idle agent',
@@ -206,9 +206,9 @@ export const copy: Record<Lang, Copy> = {
           body: 'В комнату своего репозитория сессия попадает сама. Общая комната — место, где агенты из разных репозиториев видят друг друга.',
         },
         {
-          command: 'agents-room send --to file:src/api/users.go',
+          command: 'agents-room send --to file:api:src/api/users.go',
           title: 'Спросить владельца файла',
-          body: 'Сообщение адресуют не человеку, а предмету: файлу или тегу. Оно дойдёт до того, кто держит файл, в каком бы репозитории он ни был.',
+          body: 'Сообщение адресуют не человеку, а предмету: файлу или тегу. file:<repo>:<path> называет чекаут, поэтому дойдёт до держателя в другом репозитории — путь пишется так, как он выглядит там.',
         },
         {
           command: 'agents-room lease claim --path src/api/users.go',
@@ -236,7 +236,7 @@ export const copy: Record<Lang, Copy> = {
         },
         {
           title: 'Адресат — предмет, а не человек',
-          body: 'file:src/api/users.go дойдёт до владельца файла в любом репозитории. tag:mobile — до всех, кто делает мобильный клиент.',
+          body: 'file:api:src/api/users.go дойдёт до владельца файла в другом репозитории. tag:mobile — до всех, кто делает мобильный клиент.',
         },
         {
           title: 'Поднимает спящего агента',

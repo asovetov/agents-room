@@ -61,6 +61,8 @@ type SendOptions struct {
 //   - every session in the room except the sender
 //     <session-id> one session
 //     file:<glob>  sessions holding a lease matching the glob
+//     file:<repo>:<path> sessions in repo:<repo> holding a lease matching
+//     path, read relative to the holder's checkout
 //     tag:<tag>    sessions whose join tags include the tag
 //
 // The body is never pushed into a recipient's context. Recipients learn that
@@ -161,11 +163,22 @@ func (h *Hub) Send(ctx context.Context, opt SendOptions) (*Message, error) {
 // names a different absolute file there. The message is stored either way --
 // a broadcast into an empty room is legitimate -- so the warning is the only
 // thing that tells the sender the request went nowhere.
+//
+// The warning names the fix, not only the mistake: a repository-qualified
+// selector, file:<repo>:<path>, says which checkout the path belongs to and
+// is the form the cross-repository case is written in.
 func (h *Hub) fileSelectorWarning(ctx context.Context, sessionID, selector string, recipients int) string {
 	if recipients > 0 || !strings.HasPrefix(selector, "file:") {
 		return ""
 	}
 	pattern := strings.TrimPrefix(selector, "file:")
+	// A qualified selector that reached nobody gets its own sentence: telling
+	// the sender to qualify the selector it already qualified would be noise.
+	if repoRoomID, rest, ok := h.splitRepoQualifier(ctx, pattern); ok {
+		return fmt.Sprintf("file:%s matched no recipient: no session in %s that shares "+
+			"one of your rooms holds a live lease matching %s",
+			pattern, h.roomName(ctx, repoRoomID), rest)
+	}
 	var cwd string
 	if err := h.db.SQL().QueryRowContext(ctx,
 		`SELECT cwd FROM sessions WHERE id = ?`, sessionID).Scan(&cwd); err != nil {
@@ -173,10 +186,11 @@ func (h *Hub) fileSelectorWarning(ctx context.Context, sessionID, selector strin
 	}
 	msg := fmt.Sprintf("file:%s matched no recipient", pattern)
 	if cwd != "" {
-		msg += fmt.Sprintf(": the pattern is matched against each holder's own "+
-			"checkout, so a relative path never matches a file in another "+
-			"repository. From %s that pattern means %s; to reach a holder in "+
-			"another repository, use the absolute path in the selector",
+		msg += fmt.Sprintf(": a relative path is matched against each holder's own "+
+			"checkout, so it never names a file in another repository. From %s "+
+			"that pattern means %s; to reach a holder in another repository, "+
+			"write file:<repo>:<path> with its repository room name, for example "+
+			"file:api:src/users.go, or use the absolute path",
 			cwd, filepath.Join(cwd, pattern))
 	}
 	return msg
@@ -199,18 +213,37 @@ func (h *Hub) resolve(ctx context.Context, roomIDs []string, sender, selector st
 		if pattern == "" {
 			return nil, errors.New("send: empty file selector")
 		}
+		// file:<repo>:<path> names the checkout the path belongs to, so a
+		// sender in one repository can address a holder in another with the
+		// path it sees in that repository's tree. The qualifier is a
+		// repository name only when a room repo:<name> exists; otherwise the
+		// colon is part of the path (a Windows drive letter) and the pattern
+		// is matched exactly as before.
+		repoRoomID, repoPath, qualified := h.splitRepoQualifier(ctx, pattern)
+
 		// A lease lives in the holder's repository room, so the search joins
 		// through session_rooms: a holder reachable only through a shared
 		// room must still be found.
 		// The holder's own working directory is what a relative selector is
 		// relative to. A shared room can hold sessions from different
 		// repositories, so the room's directory is the wrong anchor.
-		rows, err := h.db.SQL().QueryContext(ctx, `
+		//
+		// A qualified selector narrows the holders to sessions in the named
+		// repository room. That has to be a membership test on the owner,
+		// not on the row: the row that makes a cross-repository holder
+		// reachable is its membership in the shared room, and the same
+		// session is also a member of repo:<name>, which the sender is not.
+		query := `
 			SELECT l.path, l.owner, COALESCE(s.cwd, '') FROM leases l
 			JOIN session_rooms sr ON sr.session_id = l.owner
 			LEFT JOIN sessions s ON s.id = l.owner
-			WHERE sr.room_id IN (`+placeholders(len(roomIDs))+`) AND l.expires_at > ?`,
-			append(anySlice(roomIDs), now)...)
+			WHERE sr.room_id IN (` + placeholders(len(roomIDs)) + `) AND l.expires_at > ?`
+		args := append(anySlice(roomIDs), now)
+		if qualified {
+			query += ` AND l.owner IN (SELECT session_id FROM session_rooms WHERE room_id = ?)`
+			args = append(args, repoRoomID)
+		}
+		rows, err := h.db.SQL().QueryContext(ctx, query, args...)
 		if err != nil {
 			return nil, fmt.Errorf("resolve file selector: %w", err)
 		}
@@ -226,7 +259,11 @@ func (h *Hub) resolve(ctx context.Context, roomIDs []string, sender, selector st
 			if owner == sender || seen[owner] {
 				continue
 			}
-			if matchLeasedPath(pattern, path, holderCwd) {
+			matched := matchLeasedPath(pattern, path, holderCwd)
+			if qualified {
+				matched = matchQualifiedPath(repoPath, path, holderCwd)
+			}
+			if matched {
 				seen[owner] = true
 				out = append(out, owner)
 			}
@@ -375,6 +412,66 @@ func matchLeasedPath(pattern, leased, holderCwd string) bool {
 		}
 	}
 	return globMatch(pattern, filepath.Base(leased))
+}
+
+// matchQualifiedPath matches the path half of file:<repo>:<path> against a
+// lease held in the named repository.
+//
+// The path is what a person in that repository would type, so it is anchored
+// at the holder's checkout. The bare base name is still accepted, for the
+// same reason matchLeasedPath accepts it: naming users.go is how a sender who
+// does not remember the tree addresses a file.
+func matchQualifiedPath(pattern, leased, holderCwd string) bool {
+	if holderCwd != "" {
+		if rel, err := filepath.Rel(holderCwd, leased); err == nil {
+			if globMatch(pattern, rel) {
+				return true
+			}
+		}
+	}
+	if globMatch(pattern, leased) {
+		return true
+	}
+	return globMatch(pattern, filepath.Base(leased))
+}
+
+// splitRepoQualifier splits a file selector into a repository room id and the
+// path inside it.
+//
+// The first segment is a repository name only when a room repo:<segment>
+// exists. That rule is what keeps a Windows drive letter (file:C:\src\wire.go)
+// and any other path with a colon from being read as a repository that does
+// not exist: an unknown name is not a repository, and the selector falls
+// through to the plain path matching it had before.
+//
+// It is deliberately not "a room the sender is in". The sender in mobile is
+// in repo:mobile and shared:storefront, never in repo:api, and reaching
+// api's holder through the shared room is exactly the case the qualifier
+// exists for. Reachability is still enforced: the holder must be in the
+// sender's rooms like any other recipient, and the qualifier then narrows
+// that set to the named repository.
+func (h *Hub) splitRepoQualifier(ctx context.Context, pattern string) (roomID, path string, ok bool) {
+	name, rest, ok := splitRepoName(pattern)
+	if !ok {
+		return "", "", false
+	}
+	id, err := h.roomID(ctx, "repo:"+name)
+	if err != nil {
+		return "", "", false
+	}
+	return id, rest, true
+}
+
+// splitRepoName splits the first colon-separated segment off a file pattern.
+//
+// It is deliberately ignorant of rooms: callers decide whether the segment
+// names one. The path must be non-empty, because "file:api:" names no file.
+func splitRepoName(pattern string) (name, rest string, ok bool) {
+	i := strings.IndexByte(pattern, ':')
+	if i <= 0 || i == len(pattern)-1 {
+		return "", "", false
+	}
+	return pattern[:i], pattern[i+1:], true
 }
 
 func (h *Hub) roomName(ctx context.Context, roomID string) string {

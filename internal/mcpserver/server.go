@@ -244,7 +244,7 @@ type emptyOut struct{}
 
 type sendIn struct {
 	SessionID string `json:"session_id" jsonschema:"your session id"`
-	To        string `json:"to" jsonschema:"* | <session-id> | file:<glob> | tag:<tag>"`
+	To        string `json:"to" jsonschema:"* | <session-id> | file:<glob> | file:<repo>:<path> | tag:<tag>"`
 	Subject   string `json:"subject,omitempty" jsonschema:"short subject"`
 	Body      string `json:"body,omitempty" jsonschema:"message body"`
 	ReplyTo   string `json:"reply_to,omitempty" jsonschema:"id of the message being answered"`
@@ -266,9 +266,11 @@ func registerMessageTools(s *mcp.Server, h *hub.Hub) {
 		Name: "msg_send",
 		Description: "Send a message to a selector. '*': everyone in the room except you. " +
 			"'file:<glob>': whoever holds a lease matching the glob, which is how you reach " +
-			"the agent editing a file without knowing its session id. 'tag:<tag>': everyone " +
-			"who joined with that tag. Delivery is asynchronous: the recipient is nudged and " +
-			"fetches the body with msg_recv.",
+			"the agent editing a file without knowing its session id. 'file:<repo>:<path>': " +
+			"the same, in another repository — the path is read from that repository's " +
+			"checkout, so mobile can write file:api:src/users.go for api's file. 'tag:<tag>': " +
+			"everyone who joined with that tag. Delivery is asynchronous: the recipient is " +
+			"nudged and fetches the body with msg_recv.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, in sendIn) (*mcp.CallToolResult, sendOut, error) {
 		m, err := h.Send(ctx, hub.SendOptions{
 			From: in.SessionID, To: in.To, Subject: in.Subject,
