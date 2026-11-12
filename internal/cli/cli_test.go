@@ -661,7 +661,10 @@ func TestHistoryCommandOnAnEmptyRoom(t *testing.T) {
 // and has to be safe to run twice.
 func TestDoctorFixesHermesConfig(t *testing.T) {
 	home := t.TempDir()
+	// os.UserHomeDir reads USERPROFILE on Windows and HOME everywhere else,
+	// so a test that only sets HOME finds the runner's real home there.
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("AGENTS_ROOM_DB", filepath.Join(home, "room.db"))
 
 	hermesDir := filepath.Join(home, ".hermes")
