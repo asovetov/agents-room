@@ -45,13 +45,7 @@ func HermesCLI(harnessKey, line string) error {
 	// row -- seen live: the woken turn reported "0 unread" while the message
 	// sat on the session it was meant for. Setting the variable here makes the
 	// hook rejoin the session that was woken, so the read lands on it.
-	cmd.Env = append(os.Environ(),
-		"HERMES_SESSION_ID="+harnessKey,
-		// The hook must know this turn is a wake, not the end of the session:
-		// `-z` fires on_session_end when its one turn finishes, and treating
-		// that as "the chat is over" deletes the session that was woken.
-		"AGENTS_ROOM_WAKE=1",
-	)
+	cmd.Env = append(os.Environ(), "HERMES_SESSION_ID="+harnessKey)
 	// The turn is not this process's to wait for: the hook that emits it has a
 	// time budget of seconds and the turn can run for minutes. Its output goes
 	// to a log rather than the harness's stdout, which is a channel the

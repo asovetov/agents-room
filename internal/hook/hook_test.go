@@ -27,7 +27,11 @@ func TestNormalizeEvent(t *testing.T) {
 		{"claude-code", "PostToolBatch", eventNudge},
 		{"claude-code", "Notification", ""},
 		{"hermes", "on_session_start", eventJoin},
-		{"hermes", "on_session_finalize", eventLeave},
+		// Nothing in Hermes means "the chat is over": finalize is a
+		// gateway cache eviction, end is the end of one turn.
+		{"hermes", "on_session_finalize", eventNudge},
+		// The end of one turn is not the end of the session.
+		{"hermes", "on_session_end", eventNudge},
 		{"hermes", "pre_llm_call", eventNudge},
 		{"hermes", "pre_verify", eventNudge},
 		{"hermes", "post_tool_call", ""},
@@ -667,14 +671,13 @@ func TestHermesJoinFallsBackToThePayloadDirectory(t *testing.T) {
 	}
 }
 
-// A wake turn's end is not the end of the session.
+// A one-shot turn's end is not the end of the session.
 //
-// `hermes -z` -- what a wake starts -- fires on_session_end when its single
-// turn finishes, and Hermes fires it on resume too. Treated as "the chat is
-// over", a woken session was deleted minutes after it woke, taking its unread
-// deliveries with it. The wake spawn marks itself, and such a turn must not
-// remove the session.
-func TestWakeTurnEndDoesNotRemoveTheSession(t *testing.T) {
+// `hermes -z`, which is what a wake starts, fires on_session_end when its
+// single turn finishes while the session stays resumable. Mapped to leaving
+// the room, that deleted a woken session minutes after it woke and took its
+// unread deliveries with it -- seen live three times.
+func TestTurnEndDoesNotRemoveTheSession(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "room.db")
 	t.Setenv("AGENTS_ROOM_DB", dbPath)
@@ -690,9 +693,6 @@ func TestWakeTurnEndDoesNotRemoveTheSession(t *testing.T) {
 	}); code != 0 {
 		t.Fatalf("join hook exit %d", code)
 	}
-
-	// The wake turn's end, marked as such.
-	t.Setenv("AGENTS_ROOM_WAKE", "1")
 	if code := runWithInput("hermes", "on_session_end", "", hub.AutonomyWake, hookInput{
 		SessionID: "local-key", Cwd: dir,
 	}); code != 0 {
@@ -709,19 +709,22 @@ func TestWakeTurnEndDoesNotRemoveTheSession(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(sessions) != 1 {
-		t.Fatalf("the woken session was removed by its own turn's end; %d left", len(sessions))
+		t.Fatalf("the end of one turn removed the session; %d left", len(sessions))
 	}
 }
 
-// An ordinary end still leaves the room, or a closed chat would sit in `who`
-// for ever.
-func TestOrdinaryEndStillLeavesTheRoom(t *testing.T) {
+// No Hermes event removes a session, because none of them means "the chat is
+// over": on_session_end is the end of one turn and on_session_finalize is the
+// gateway evicting an idle agent from its cache, after which the session
+// resumes from the persisted store. Removing on either deleted live sessions
+// and their unread mail -- measured at 300s after a wake turn. A Hermes
+// session leaves through prune, which is what it is for.
+func TestNoHermesEventRemovesTheSession(t *testing.T) {
 	ctx := context.Background()
 	dbPath := filepath.Join(t.TempDir(), "room.db")
 	t.Setenv("AGENTS_ROOM_DB", dbPath)
 	t.Setenv("AGENTS_ROOM_PID", "4242")
 	t.Setenv("HERMES_HOME", filepath.Join(t.TempDir(), "absent"))
-	t.Setenv("AGENTS_ROOM_WAKE", "")
 
 	dir := filepath.Join(t.TempDir(), "shop")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -730,9 +733,11 @@ func TestOrdinaryEndStillLeavesTheRoom(t *testing.T) {
 	runWithInput("hermes", "on_session_start", "", hub.AutonomyWake, hookInput{
 		SessionID: "local-key", Cwd: dir,
 	})
-	runWithInput("hermes", "on_session_finalize", "", hub.AutonomyWake, hookInput{
-		SessionID: "local-key", Cwd: dir,
-	})
+	for _, ev := range []string{"on_session_end", "on_session_finalize", "SessionEnd"} {
+		runWithInput("hermes", ev, "", hub.AutonomyWake, hookInput{
+			SessionID: "local-key", Cwd: dir,
+		})
+	}
 
 	h, err := hub.OpenPath(dbPath)
 	if err != nil {
@@ -743,7 +748,7 @@ func TestOrdinaryEndStillLeavesTheRoom(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(sessions) != 0 {
-		t.Fatalf("a real session end did not remove the session: %d left", len(sessions))
+	if len(sessions) != 1 {
+		t.Fatalf("a Hermes event removed the session; %d left", len(sessions))
 	}
 }

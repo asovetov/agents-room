@@ -132,23 +132,6 @@ func runWithInput(harness, event, room string, autonomy int, in hookInput) int {
 		return 0
 
 	case eventLeave:
-		// A one-shot turn is not the end of the session.
-		//
-		// `hermes -z`, which is what a wake starts, fires on_session_end when
-		// its single turn finishes, and Hermes also fires it on resume. Both
-		// were treated as "the chat is over", so a woken session was deleted
-		// minutes after it woke -- taking its unread deliveries with it, and
-		// leaving the sender's message `accepted` for ever. Seen live: a
-		// session woke, answered, and was gone five minutes later.
-		//
-		// The wake spawn marks itself with AGENTS_ROOM_WAKE, and such a turn
-		// only touches last_seen. A real end still leaves the room.
-		if os.Getenv("AGENTS_ROOM_WAKE") != "" {
-			if s, err := h.FindSession(ctx, roomName, harness, in.SessionID); err == nil && s != nil {
-				_ = h.Touch(ctx, s.ID)
-			}
-			return 0
-		}
 		if s, err := h.FindSession(ctx, roomName, harness, in.SessionID); err == nil && s != nil {
 			h.Leave(ctx, s.ID)
 		}
@@ -195,9 +178,18 @@ func normalizeEvent(harness, event string) string {
 		switch event {
 		case "on_session_start", "SessionStart":
 			return eventJoin
-		case "on_session_finalize", "on_session_end", "SessionEnd":
-			return eventLeave
-		case "pre_llm_call", "pre_tool_call", "pre_verify", "Stop", "PostToolBatch":
+		// Nothing in Hermes means "this chat is over".
+		//
+		// on_session_end fires at the end of one turn. on_session_finalize
+		// fires from the gateway's five-minute housekeeping sweep when it
+		// evicts an idle agent from its cache -- measured at 300s after a
+		// turn ended, and the session resumes from the persisted store on the
+		// next message. Neither is an end: mapped to leaving the room they
+		// deleted live sessions and took their unread deliveries with them.
+		// A Hermes session leaves when it is pruned as stale, which is what
+		// `prune` is for.
+		case "on_session_end", "on_session_finalize", "SessionEnd",
+			"pre_llm_call", "pre_tool_call", "pre_verify", "Stop", "PostToolBatch":
 			return eventNudge
 		}
 		return ""
