@@ -97,10 +97,10 @@ bare base name.
 
 The holder's directory is the anchor, not the room's: a shared room can hold
 sessions from several repositories, and `src/wire.go` means a different file
-in each of them. That is why the plain form cannot reach another repository;
-`file:api:src/api/users.go` says which checkout is meant, and the first
-segment is a repository name only when that room exists. The holder still has
-to share a room with you, and an absolute path works as before.
+in each of them. So the plain form reaches every repository whose tree has
+that relative path; `file:api:src/api/users.go` narrows it to one checkout.
+The first segment is a repository name only when that room exists. The holder
+still has to share a room with you, and an absolute path works as before.
 
 A selector that matches nobody is not an error: a broadcast in a room of one
 is a legitimate send with zero recipients. The count is reported back, so a

@@ -163,10 +163,11 @@ The holder's directory is the anchor, not the room's: a shared room can hold
 sessions from several repositories, and `src/wire.go` means a different file
 in each of them.
 
-That anchor is why the plain form cannot reach another repository: the same
-relative string names a different absolute file in each checkout. The
-qualified form says which checkout it means, so an agent in `mobile` writes
-the path as it appears in `api`'s tree:
+Because each checkout is its own anchor, the plain form matches **every**
+repository whose tree has a file at that relative path: `file:src/api/users.go`
+from `mobile` reaches api's holder and web's holder when both checkouts have
+that file. The qualified form says which checkout is meant, so it reaches one
+repository and not the others:
 
 ```bash
 agents-room send --session $ID --to file:api:src/api/users.go --subject "need a phone field"

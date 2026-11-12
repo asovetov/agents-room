@@ -268,6 +268,70 @@ func TestQualifiedFileSelectorIgnoresAnotherRepository(t *testing.T) {
 	}
 }
 
+// A plain relative selector is matched against every holder's checkout, so it
+// reaches every repository whose tree has a file at that relative path -- not
+// only the sender's. This is the behaviour the qualified form exists to
+// narrow, and it is pinned here so a later "fix" that silently drops the
+// cross-repository match is caught.
+func TestPlainRelativeSelectorReachesEveryMatchingRepository(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	apiDir := t.TempDir()
+	webDir := t.TempDir()
+
+	api, err := h.Join(ctx, JoinOptions{
+		Room: "repo:api", ExtraRooms: []string{"shared:storefront"},
+		Cwd: apiDir, Harness: "test", HarnessKey: "api",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	web, err := h.Join(ctx, JoinOptions{
+		Room: "repo:web", ExtraRooms: []string{"shared:storefront"},
+		Cwd: webDir, Harness: "test", HarnessKey: "web",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mobile, err := h.Join(ctx, JoinOptions{
+		Room: "repo:mobile", ExtraRooms: []string{"shared:storefront"},
+		Cwd: t.TempDir(), Harness: "test", HarnessKey: "mobile",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, holder := range []struct {
+		id  string
+		dir string
+	}{{api.ID, apiDir}, {web.ID, webDir}} {
+		if _, err := h.Claim(ctx, holder.id, filepath.Join(holder.dir, "src", "api", "users.go"), 60, ModeExclusive); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	msg, err := h.Send(ctx, SendOptions{
+		From: mobile.ID, To: "file:src/api/users.go", Subject: "s", Body: "b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if msg.Recipients != 2 {
+		t.Fatalf("recipients = %d, want both repositories that have that relative path", msg.Recipients)
+	}
+
+	// And the qualified form is what narrows it to one.
+	q, err := h.Send(ctx, SendOptions{
+		From: mobile.ID, To: "file:api:src/api/users.go", Subject: "s", Body: "b",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if q.Recipients != 1 {
+		t.Fatalf("qualified recipients = %d, want only api", q.Recipients)
+	}
+}
+
 // A qualified selector reaches nobody when the named repository's holder
 // shares no room with the sender. The qualifier says where the file is; it
 // does not make an unreachable agent reachable.

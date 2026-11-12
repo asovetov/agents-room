@@ -124,9 +124,10 @@ session that survives.
 
 ## "A `file:` message reached nobody"
 
-A relative pattern is read from each holder's own checkout, so the same
-string names a different file in every repository. The warning names the
-absolute path the pattern meant; the cross-repository form is:
+A relative pattern is read from each holder's own checkout, so it matches
+every repository with a file at that relative path, and nobody at all if the
+file is not leased anywhere. The warning names the absolute path the pattern
+meant; the form that names one repository is:
 
 ```bash
 agents-room send --session $ID --to file:api:src/api/users.go --subject "x"

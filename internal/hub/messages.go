@@ -153,20 +153,17 @@ func (h *Hub) Send(ctx context.Context, opt SendOptions) (*Message, error) {
 	}, nil
 }
 
-// fileSelectorWarning explains a file: selector that reached nobody, and why
-// the usual reason is a path in another repository.
+// fileSelectorWarning explains a file: selector that reached nobody.
 //
 // A file: pattern is matched against each holder's leased path in three
-// forms, one of them relative to the holder's own directory. An agent that
-// writes the pattern as it sees the file in its own checkout therefore never
-// matches a holder in another repository, because the same relative string
-// names a different absolute file there. The message is stored either way --
-// a broadcast into an empty room is legitimate -- so the warning is the only
-// thing that tells the sender the request went nowhere.
+// forms, one of them relative to the holder's own directory. The usual miss
+// is a path that no holder has: a file the sender has not leased, or a
+// relative path that exists in no checkout it can see.
 //
-// The warning names the fix, not only the mistake: a repository-qualified
-// selector, file:<repo>:<path>, says which checkout the path belongs to and
-// is the form the cross-repository case is written in.
+// The warning names the fix, not only the mistake. A repository-qualified
+// selector, file:<repo>:<path>, says which checkout the path belongs to, so
+// the path is read where the sender means it and is not matched against every
+// other checkout that happens to have the same relative path.
 func (h *Hub) fileSelectorWarning(ctx context.Context, sessionID, selector string, recipients int) string {
 	if recipients > 0 || !strings.HasPrefix(selector, "file:") {
 		return ""
@@ -186,12 +183,11 @@ func (h *Hub) fileSelectorWarning(ctx context.Context, sessionID, selector strin
 	}
 	msg := fmt.Sprintf("file:%s matched no recipient", pattern)
 	if cwd != "" {
-		msg += fmt.Sprintf(": a relative path is matched against each holder's own "+
-			"checkout, so it never names a file in another repository. From %s "+
-			"that pattern means %s; to reach a holder in another repository, "+
-			"write file:<repo>:<path> with its repository room name, for example "+
-			"file:api:src/users.go, or use the absolute path",
-			cwd, filepath.Join(cwd, pattern))
+		msg += fmt.Sprintf(": a relative path is matched against every holder's own "+
+			"checkout, and nobody holds %s. To name one repository's file, write "+
+			"file:<repo>:<path> with its repository room name, for example "+
+			"file:api:src/users.go; an absolute path works too",
+			filepath.Join(cwd, pattern))
 	}
 	return msg
 }
