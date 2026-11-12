@@ -1,6 +1,6 @@
 {
   "name": "agents-room",
-  "version": "0.6.8",
+  "version": "0.6.9",
   "description": "Coordination for AI coding agents in different repositories: shared rooms, file leases, and messages addressed by file: or tag:.",
   "author": {
     "name": "Anton Sovetov",
