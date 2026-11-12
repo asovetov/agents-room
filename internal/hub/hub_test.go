@@ -1072,3 +1072,49 @@ func TestApplyDuplicateFixKeepsTheMoreAdvancedDeliveryState(t *testing.T) {
 			state, StateRead)
 	}
 }
+
+// A rejoin that names no directory keeps the one already recorded.
+//
+// An MCP room_join carries no cwd, and the server runs from wherever the
+// harness started it. Before this, such a rejoin wrote the server's own
+// directory over the session's: a woken Hermes turn moved a session from its
+// checkout to the install tree, which moved its repository room and its lease
+// anchor with it.
+func TestRejoinWithoutCwdKeepsTheRecordedDirectory(t *testing.T) {
+	ctx := context.Background()
+	h := newHub(t)
+
+	checkout := t.TempDir()
+	first, err := h.Join(ctx, JoinOptions{
+		Room: "repo:shop", Harness: "hermes", HarnessKey: "k1", Cwd: checkout,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A second join with no Cwd, as the MCP tool does.
+	again, err := h.Join(ctx, JoinOptions{
+		Room: "repo:shop", Harness: "hermes", HarnessKey: "k1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != first.ID {
+		t.Fatalf("rejoin created a new session %s != %s", again.ID, first.ID)
+	}
+	if again.Cwd != checkout {
+		t.Fatalf("cwd = %q, want the recorded %q", again.Cwd, checkout)
+	}
+
+	// And a caller that does name a directory still moves it.
+	moved := t.TempDir()
+	third, err := h.Join(ctx, JoinOptions{
+		Room: "repo:shop", Harness: "hermes", HarnessKey: "k1", Cwd: moved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Cwd != moved {
+		t.Fatalf("cwd = %q, want the newly named %q", third.Cwd, moved)
+	}
+}

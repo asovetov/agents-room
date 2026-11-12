@@ -222,7 +222,17 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 	if opt.Room == "" {
 		opt.Room = RepoRoom("")
 	}
-	if opt.Cwd == "" {
+	// A caller that named no directory is not saying "the one this process
+	// happens to be in". On a rejoin it means "the one already recorded", and
+	// overwriting it moves a live session into the wrong repository room and
+	// breaks its lease anchor. That is what an MCP room_join did: it carries
+	// no cwd, the server ran from wherever the harness started it, and the
+	// session of a woken Hermes turn was moved to the install directory.
+	//
+	// The flag lets the rejoin path tell the two apart. A first join still
+	// falls back to the process directory, which is the best answer it has.
+	cwdSet := opt.Cwd != ""
+	if !cwdSet {
 		cwd, err := os.Getwd()
 		if err != nil {
 			return nil, fmt.Errorf("get working directory: %w", err)
@@ -338,15 +348,23 @@ func (h *Hub) Join(ctx context.Context, opt JoinOptions) (*Session, error) {
 	var sessionID string
 	if existing != nil {
 		sessionID = existing.ID
+		// cwd only moves when the caller named one. See the note above the
+		// fallback: an unnamed cwd on a rejoin is "unchanged", not "wherever
+		// this process is".
+		cwd := existing.Cwd
+		if cwdSet {
+			cwd = opt.Cwd
+		}
 		if _, err := h.db.SQL().ExecContext(ctx, `
 			UPDATE sessions
 			SET cwd = ?, pid = ?, pid_started_at = ?, label = ?, tags = ?, autonomy = ?,
 			    last_seen = ?, wake_socket = CASE WHEN ? <> '' THEN ? ELSE wake_socket END
 			WHERE id = ?`,
-			opt.Cwd, opt.PID, pidStartedAt, opt.Label, string(tags), effective, now,
+			cwd, opt.PID, pidStartedAt, opt.Label, string(tags), effective, now,
 			opt.WakeSocket, opt.WakeSocket, sessionID); err != nil {
 			return nil, fmt.Errorf("update session: %w", err)
 		}
+		opt.Cwd = cwd
 	}
 
 	if sessionID == "" {
