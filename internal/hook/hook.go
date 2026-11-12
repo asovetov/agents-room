@@ -260,23 +260,48 @@ func nudge(ctx context.Context, h *hub.Hub, harness, roomName, harnessKey, event
 // is the honest behaviour the protocol promises for a harness with no wake
 // lever.
 func wakeIdleRecipients(ctx context.Context, h *hub.Hub, minAge int64) int {
-	wakers, err := h.Wakers(ctx, minAge)
+	// The Hermes CLI backend is a full agent turn with approvals bypassed, so
+	// it runs only when the operator turned it on. With it off those sessions
+	// are still listed, with no backend, and their messages wait for the next
+	// turn -- which is what the protocol promises for a harness with no lever.
+	hermesCLI := wake.Enabled()
+
+	wakers, err := h.WakersWithHermesCLI(ctx, minAge, hermesCLI)
 	if err != nil {
 		return 0
 	}
 	posted := 0
 	for _, w := range wakers {
-		if w.Socket == "" {
-			continue
-		}
 		line := wake.Nudge(w.Rooms, w.Pending)
-		if err := wake.PostToSocket(w.Socket, "", line); err != nil {
-			// The chat may have exited without leaving; its row stays and its
-			// messages wait, which is the safe direction.
+		switch w.Backend {
+		case hub.WakeSocket:
+			if err := wake.PostToSocket(w.Socket, "", line); err != nil {
+				// The chat may have exited without leaving; its row stays and
+				// its messages wait, which is the safe direction.
+				continue
+			}
+			h.MarkOffered(ctx, w.SessionID, hub.StateAccepted)
+			posted++
+
+		case hub.WakeHermesCLI:
+			// One turn per burst: several messages sent within a minute are
+			// one request, and a turn per message would burn tokens and stack
+			// runs on one session.
+			if !wake.AllowWake(w.SessionID) {
+				continue
+			}
+			if err := wake.HermesCLI(w.HarnessKey, line); err != nil {
+				// Not started: leave the delivery stored, so it is announced
+				// again rather than recorded as a signal nobody received.
+				continue
+			}
+			h.MarkOffered(ctx, w.SessionID, hub.StateAccepted)
+			posted++
+
+		default:
+			// No lever for this session.
 			continue
 		}
-		h.MarkOffered(ctx, w.SessionID, hub.StateAccepted)
-		posted++
 	}
 	return posted
 }

@@ -385,13 +385,21 @@ that: a session with no recorded pid is never pruned. On those platforms
 ## Status
 
 Early, and honest about it. The store, rooms, sessions, messages, leases,
-drift, the CLI, the MCP server, schema migrations and the Claude Code and
-Hermes wake paths work and are tested, including an end-to-end suite that
-runs the real binaries as separate processes. The Codex adapter follows
-Codex's source contract but has not been run end to end, because Codex is not
-installed on the author's machine.
+drift, the CLI and the MCP server work and are tested, including an end-to-end
+suite that runs the real binaries as separate processes.
 
-See [`docs/plan.md`](docs/plan.md) for milestones and
+"Works with a harness" is three different claims, and they are listed
+separately because they fail separately:
+
+| Harness | MCP tools | Hooks: join, leases, messages | Wakes an idle session |
+|---|---|---|---|
+| Claude Code | yes | yes | yes, inbox socket |
+| Hermes | yes | yes, written by `doctor --fix` | **off by default**: opt in with `~/.agents-room/wake`, which resumes the session with `hermes -z` (a full turn with approvals bypassed) |
+| Codex CLI | yes | yes | no; the message waits for the next turn (its `codex queue --resume` needs a running app-server daemon) |
+| Any other MCP client | yes, stdio | no | no; the message waits for the next turn |
+
+See [`docs/plan.md`](docs/plan.md) for milestones,
+[`docs/harness-setup.md`](docs/harness-setup.md) for per-harness wiring, and
 [`docs/CONTEXT.md`](docs/CONTEXT.md) for what is still open.
 
 ## License

@@ -184,23 +184,38 @@ room is the only cross-session path there.
 ## Hermes
 
 Hermes has shell hooks that can inject context and hold the end of a turn.
-Add to `~/.hermes/config.yaml` (or a profile's `config.yaml`):
+
+`agents-room doctor --fix` writes everything below into `~/.hermes/config.yaml`
+— the hooks, the MCP server, `hooks_auto_accept` and `--autonomy=2` — with a
+backup beside the file and without reformatting your own content.
 
 ```yaml
 hooks:
   on_session_start:
-    - command: agents-room hook --harness=hermes --event=on_session_start
+    - command: agents-room hook --harness=hermes --event=on_session_start --autonomy=2
+      timeout: 10
+  on_session_end:
+    - command: agents-room hook --harness=hermes --event=Stop --autonomy=2
       timeout: 10
   on_session_finalize:
-    - command: agents-room hook --harness=hermes --event=on_session_finalize
+    - command: agents-room hook --harness=hermes --event=on_session_finalize --autonomy=2
       timeout: 10
   pre_llm_call:
-    - command: agents-room hook --harness=hermes --event=pre_llm_call
+    - command: agents-room hook --harness=hermes --event=pre_llm_call --autonomy=2
       timeout: 10
   pre_verify:
-    - command: agents-room hook --harness=hermes --event=pre_verify
+    - command: agents-room hook --harness=hermes --event=pre_verify --autonomy=2
       timeout: 10
 ```
+
+`on_session_end` carries `--event=Stop`: the natural name maps to leaving the
+room, and would drop the session at the end of every turn. `--autonomy=2` is
+what lets a waiting message start a turn while the chat is idle.
+
+Hermes reports the hook process's directory as the session's, and that process
+lives in the install tree. The hook takes the real directory from Hermes' own
+store (`~/.hermes/state.db`, the value `hermes sessions list` shows as
+Workspace), so a session started from a checkout joins that checkout's room.
 
 The hook speaks Hermes's JSON wire protocol: a payload on stdin, a JSON
 object on stdout.
@@ -208,6 +223,7 @@ object on stdout.
 | Event | Output | Effect |
 |---|---|---|
 | `on_session_start` | none | joins the room |
+| `on_session_end` (`--event=Stop`) | none | announces waiting messages |
 | `on_session_finalize` | none | leaves the room and releases leases |
 | `pre_llm_call` | `{"context": "..."}` | appends the nudge to the user message |
 | `pre_verify` | `{"action": "continue", "message": "..."}` | holds the end of a turn, only at `hold` or above |
@@ -240,6 +256,20 @@ GOBIN=~/.local/bin go install github.com/asovetov/agents-room/cmd/agents-room@la
 Verified against Hermes 0.22.5 through its own shell-hook dispatcher: join,
 `pre_llm_call` context injection, `pre_verify` holding the turn at `hold`
 level, silence after `msg_recv`, and leave on `on_session_finalize`.
+
+### Waking an idle Hermes session
+
+Off by default: a message waits `stored` and is announced on the agent's next
+turn. To let the room start the turn, write one line:
+
+```bash
+echo 'hermes=cli' > ~/.agents-room/wake
+```
+
+`hermes -z` sets `HERMES_YOLO_MODE=1`, so the turn it starts runs commands
+without asking, and it is started by a message another agent sent. That is why
+this is a deliberate line in a file and not a default; delete the file to turn
+it off. One wake per session per minute, not per message.
 
 ## Any other MCP client
 

@@ -182,23 +182,43 @@ room is the only cross-session path there.
 ## Hermes
 
 Hermes has shell hooks that can inject context and hold the end of a turn.
-Add to `~/.hermes/config.yaml` (or a profile's `config.yaml`):
+
+`agents-room doctor --fix` writes everything below into `~/.hermes/config.yaml`
+— the six hooks, the MCP server, `hooks_auto_accept` and `--autonomy=2` — with
+a backup beside the file and no reformatting of your own content. The
+sections here are what it writes and why, for a hand-edited config.
 
 ```yaml
 hooks:
   on_session_start:
-    - command: agents-room hook --harness=hermes --event=on_session_start
+    - command: agents-room hook --harness=hermes --event=on_session_start --autonomy=2
+      timeout: 10
+  on_session_end:
+    - command: agents-room hook --harness=hermes --event=Stop --autonomy=2
       timeout: 10
   on_session_finalize:
-    - command: agents-room hook --harness=hermes --event=on_session_finalize
+    - command: agents-room hook --harness=hermes --event=on_session_finalize --autonomy=2
       timeout: 10
   pre_llm_call:
-    - command: agents-room hook --harness=hermes --event=pre_llm_call
+    - command: agents-room hook --harness=hermes --event=pre_llm_call --autonomy=2
       timeout: 10
   pre_verify:
-    - command: agents-room hook --harness=hermes --event=pre_verify
+    - command: agents-room hook --harness=hermes --event=pre_verify --autonomy=2
       timeout: 10
 ```
+
+`on_session_end` carries `--event=Stop`, not `on_session_end`. The hook maps
+that name to *leaving the room*, so wiring the natural name makes the session
+drop out at the end of every turn. `--autonomy=2` is what lets a waiting
+message start a turn while the chat is idle; without it the hooks run and
+nothing is ever announced to a quiet session.
+
+One caveat about where the session lands: Hermes reports the hook process's
+directory as the session's, and that process lives in the install tree. The
+hook therefore takes the real directory from Hermes' own session store
+(`~/.hermes/state.db`), which is the same value `hermes sessions list` prints
+as Workspace, and falls back to the payload only when that lookup has no
+answer. A session started from a checkout joins that checkout's room.
 
 The hook speaks Hermes's JSON wire protocol: a payload on stdin, a JSON
 object on stdout.
@@ -206,6 +226,7 @@ object on stdout.
 | Event | Output | Effect |
 |---|---|---|
 | `on_session_start` | none | joins the room |
+| `on_session_end` (`--event=Stop`) | none | announces waiting messages |
 | `on_session_finalize` | none | leaves the room and releases leases |
 | `pre_llm_call` | `{"context": "..."}` | appends the nudge to the user message |
 | `pre_verify` | `{"action": "continue", "message": "..."}` | holds the end of a turn, only at `hold` or above |
@@ -238,6 +259,29 @@ GOBIN=~/.local/bin go install github.com/asovetov/agents-room/cmd/agents-room@la
 Verified against Hermes 0.22.5 through its own shell-hook dispatcher: join,
 `pre_llm_call` context injection, `pre_verify` holding the turn at `hold`
 level, silence after `msg_recv`, and leave on `on_session_finalize`.
+
+### Waking an idle Hermes session
+
+By default a Hermes session is not woken: a message waits `stored` and is
+announced on the agent's next turn, because Hermes sets no inbox socket and
+there is no signal channel to use.
+
+There is a way to start the turn from the room, and it is **off unless you
+turn it on**:
+
+```bash
+echo 'hermes=cli' > ~/.agents-room/wake
+```
+
+With that file, a session at autonomy 2 and with a harness key is resumed with
+`hermes --resume <key> -z "<nudge>"`. `doctor` reports whether it is on and
+never turns it on for you; delete the file to turn it off again.
+
+**What you are turning on.** `hermes -z` sets `HERMES_YOLO_MODE=1`, so the
+turn runs commands without asking. It is started by a message another agent
+sent. That is a materially different power from leaving a note, which is why
+it is a deliberate line in a file rather than a default. One wake is emitted
+per session per minute, not per message.
 
 ## Any other MCP client
 

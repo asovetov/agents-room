@@ -941,6 +941,16 @@ func (h *Hub) Inbox(ctx context.Context, sessionID string) (*InboxSummary, error
 	return out, nil
 }
 
+// Wake backends. A recipient has at most one, and none means its messages
+// wait for its next turn.
+const (
+	// WakeSocket is a Claude Code inbox socket: a signal, not a turn.
+	WakeSocket = "socket"
+	// WakeHermesCLI resumes a Hermes session with a one-shot prompt. It is a
+	// full agent turn with approvals bypassed, so it is opt-in.
+	WakeHermesCLI = "hermes-cli"
+)
+
 // Waker is one recipient that can be told about a waiting message.
 type Waker struct {
 	SessionID string `json:"session_id"`
@@ -948,6 +958,12 @@ type Waker struct {
 	// Socket is the inbox socket this chat's harness reads. Empty means the
 	// chat cannot be woken while idle and its message waits for a pull.
 	Socket string `json:"socket,omitempty"`
+	// Backend names how to wake this session: WakeSocket, WakeHermesCLI, or
+	// empty when there is no lever. A caller must dispatch on it rather than
+	// assuming a socket.
+	Backend string `json:"backend,omitempty"`
+	// HarnessKey is what a CLI backend needs to address the session again.
+	HarnessKey string `json:"harness_key,omitempty"`
 	// Pending is how many messages are waiting for this recipient with no
 	// signal yet.
 	Pending int `json:"pending"`
@@ -968,10 +984,23 @@ type Waker struct {
 // a message that has been offered once is the retry path's business, and a
 // session below wake cannot be woken while idle at all.
 func (h *Hub) Wakers(ctx context.Context, minAge int64) ([]Waker, error) {
+	return h.WakersWithHermesCLI(ctx, minAge, false)
+}
+
+// WakersWithHermesCLI is Wakers with the Hermes CLI backend allowed or not.
+//
+// The Hermes backend is a separate argument, not a stored setting, so the
+// decision is made by the process that spawns the turn and never leaks into a
+// caller that only meant to read the store. It is off unless the operator
+// turned it on: `hermes --resume -z` sets HERMES_YOLO_MODE, so waking a
+// Hermes session is starting a full agent turn with approvals bypassed, which
+// is not something a message from another agent should be able to do by
+// default.
+func (h *Hub) WakersWithHermesCLI(ctx context.Context, minAge int64, allowHermesCLI bool) ([]Waker, error) {
 	cutoff := h.now() - minAge
 	rows, err := h.db.SQL().QueryContext(ctx, `
 		SELECT d.session_id, COALESCE(s.label, ''), COALESCE(s.wake_socket, ''),
-		       COUNT(*)
+		       COALESCE(s.harness, ''), COALESCE(s.harness_key, ''), COUNT(*)
 		FROM deliveries d
 		JOIN sessions s ON s.id = d.session_id
 		WHERE s.autonomy >= ?
@@ -987,8 +1016,21 @@ func (h *Hub) Wakers(ctx context.Context, minAge int64) ([]Waker, error) {
 	out := []Waker{}
 	for rows.Next() {
 		var w Waker
-		if err := rows.Scan(&w.SessionID, &w.Label, &w.Socket, &w.Pending); err != nil {
+		var harness, key string
+		if err := rows.Scan(&w.SessionID, &w.Label, &w.Socket, &harness, &key, &w.Pending); err != nil {
 			return nil, fmt.Errorf("wakers: scan: %w", err)
+		}
+		switch {
+		case w.Socket != "":
+			w.Backend = WakeSocket
+		case allowHermesCLI && harness == "hermes" && key != "":
+			w.Backend = WakeHermesCLI
+			w.HarnessKey = key
+		default:
+			// No lever for this session. It stays in the list because its
+			// pending count is real, and a caller that skips it says so by
+			// checking Backend rather than guessing from an empty socket.
+			w.Backend = ""
 		}
 		rooms, err := h.UnreadRooms(ctx, w.SessionID)
 		if err != nil {

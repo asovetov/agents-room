@@ -185,23 +185,40 @@ args = ["mcp"]
 ## Hermes
 
 У Hermes есть шелл-хуки, которые могут вставлять контекст и удерживать конец
-хода. Добавьте в `~/.hermes/config.yaml` (или в `config.yaml` профиля):
+хода.
+
+`agents-room doctor --fix` сам дописывает всё перечисленное ниже в
+`~/.hermes/config.yaml` — хуки, MCP-сервер, `hooks_auto_accept` и
+`--autonomy=2` — с бэкапом рядом и без переформатирования вашего текста.
 
 ```yaml
 hooks:
   on_session_start:
-    - command: agents-room hook --harness=hermes --event=on_session_start
+    - command: agents-room hook --harness=hermes --event=on_session_start --autonomy=2
+      timeout: 10
+  on_session_end:
+    - command: agents-room hook --harness=hermes --event=Stop --autonomy=2
       timeout: 10
   on_session_finalize:
-    - command: agents-room hook --harness=hermes --event=on_session_finalize
+    - command: agents-room hook --harness=hermes --event=on_session_finalize --autonomy=2
       timeout: 10
   pre_llm_call:
-    - command: agents-room hook --harness=hermes --event=pre_llm_call
+    - command: agents-room hook --harness=hermes --event=pre_llm_call --autonomy=2
       timeout: 10
   pre_verify:
-    - command: agents-room hook --harness=hermes --event=pre_verify
+    - command: agents-room hook --harness=hermes --event=pre_verify --autonomy=2
       timeout: 10
 ```
+
+`on_session_end` несёт `--event=Stop`: естественное имя отображается в выход
+из комнаты, и сессия выпадала бы в конце каждого хода. `--autonomy=2` — то,
+что позволяет ждущему сообщению начать ход в простаивающем чате.
+
+Hermes передаёт в хук каталог процесса хука, а этот процесс живёт в дереве
+установки. Хук берёт настоящий каталог из собственного стора Hermes
+(`~/.hermes/state.db`, то же значение, что `hermes sessions list` показывает
+как Workspace), поэтому сессия, запущенная из чекаута, входит в комнату
+этого чекаута.
 
 Хук говорит на JSON-протоколе Hermes: payload на stdin, JSON-объект на
 stdout.
@@ -209,6 +226,7 @@ stdout.
 | Событие | Вывод | Действие |
 |---|---|---|
 | `on_session_start` | нет | входит в комнату |
+| `on_session_end` (`--event=Stop`) | нет | объявляет ждущие сообщения |
 | `on_session_finalize` | нет | выходит и отпускает лизы |
 | `pre_llm_call` | `{"context": "..."}` | дописывает нюдж к сообщению пользователя |
 | `pre_verify` | `{"action": "continue", "message": "..."}` | удерживает конец хода, только на `hold` и выше |
@@ -242,6 +260,20 @@ GOBIN=~/.local/bin go install github.com/asovetov/agents-room/cmd/agents-room@la
 вставка контекста через `pre_llm_call`, удержание хода через `pre_verify` на
 уровне `hold`, молчание после `msg_recv` и выход по
 `on_session_finalize`.
+
+### Пробуждение простаивающей сессии Hermes
+
+По умолчанию выключено: сообщение ждёт в состоянии `stored` и объявляется на
+следующем ходу агента. Чтобы комната могла начать ход, нужна одна строка:
+
+```bash
+echo 'hermes=cli' > ~/.agents-room/wake
+```
+
+`hermes -z` ставит `HERMES_YOLO_MODE=1`, поэтому запущенный ход выполняет
+команды без подтверждений, и запускает его сообщение другого агента. Именно
+поэтому это осознанная строка в файле, а не поведение по умолчанию; удалите
+файл, чтобы выключить. Одно пробуждение на сессию в минуту, не на сообщение.
 
 ## Любой другой MCP-клиент
 

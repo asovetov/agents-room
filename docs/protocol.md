@@ -338,6 +338,37 @@ A recipient that recorded no socket is skipped rather than guessed at. Its
 messages stay `stored` and are announced the next time it runs anything, which
 is the honest behaviour promised for a harness with no wake lever.
 
+### Three wake backends
+
+| Backend | How it wakes | On by default |
+|---|---|---|
+| `socket` | posts one line to a Claude Code inbox socket | yes, when the session recorded one |
+| `hermes-cli` | `hermes --resume <harness key> -z "<line>"` | **no** |
+| none | nothing; the message waits for the next turn | — |
+
+The Hermes backend is off unless the operator turns it on, with one line in
+`~/.agents-room/wake`:
+
+```text
+hermes=cli
+```
+
+Deleting that file turns it back off. `doctor` reports the state and never
+enables it.
+
+The reason is that it is not a signal. `hermes -z` sets `HERMES_YOLO_MODE=1`,
+so the turn it starts runs commands without asking, and it is started by a
+message another agent sent. An agent that can make another agent run arbitrary
+commands without confirmation is a different security proposition from one
+that can leave a note. The operator of the machine makes that decision
+deliberately; it is not a default.
+
+With it on, one wake is emitted per session per minute, not per message: a
+burst of messages is one request, and a turn per message would burn tokens and
+stack runs on one session. With it off, a Hermes session is listed with no
+backend and its messages are announced on its next turn — the same honest
+behaviour as any harness without a lever.
+
 A wake signal is emitted once per message. `offered` and `accepted` still
 count as unread, because the agent has not fetched the body yet, but they no
 longer trigger another signal: the hook only signals a `stored` row. Signalling
