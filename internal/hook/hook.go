@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/asovetov/agents-room/internal/harnesscwd"
 	"github.com/asovetov/agents-room/internal/hub"
 	"github.com/asovetov/agents-room/internal/wake"
 )
@@ -71,6 +72,17 @@ func runWithInput(harness, event, room string, autonomy int, in hookInput) int {
 		// Without a harness session id there is nothing to key a session
 		// on; stay silent rather than create an orphan.
 		return 0
+	}
+	// Hermes reports the hook process's directory as the session's, and that
+	// process lives in the Hermes install tree rather than in the checkout
+	// the agent was started from. Every session therefore landed in
+	// repo:.hermes, and a message addressed to it could not find it. The
+	// directory the session really was started in is in Hermes' own store;
+	// the payload is used only when that lookup has no answer.
+	if harness == "hermes" {
+		if cwd, err := harnesscwd.HermesSessionCwdRetry(ctx, in.SessionID, 400*time.Millisecond); err == nil && cwd != "" {
+			in.Cwd = cwd
+		}
 	}
 
 	h, err := hub.Open()

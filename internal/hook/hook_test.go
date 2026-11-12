@@ -3,6 +3,7 @@ package hook
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"net"
@@ -577,5 +578,91 @@ func TestWakingIsIndependentOfTheCallersSession(t *testing.T) {
 	case <-recvGot:
 	case <-time.After(2 * time.Second):
 		t.Fatal("a hook with no session of its own did not wake the recipient")
+	}
+}
+
+// Hermes reports the hook process's directory as the session's, and that
+// process lives in the Hermes install tree. Without the lookup from Hermes'
+// own store every session landed in repo:.hermes, so a message addressed to
+// it never found it.
+func TestHermesJoinUsesTheSessionsOwnDirectory(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "room.db")
+	t.Setenv("AGENTS_ROOM_DB", dbPath)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+
+	// A stand-in for Hermes' store: the session was started in a checkout,
+	// while the payload will claim the install directory.
+	hermesHome := t.TempDir()
+	t.Setenv("HERMES_HOME", hermesHome)
+	store, err := sql.Open("sqlite", "file:"+filepath.Join(hermesHome, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exec(`CREATE TABLE sessions (id TEXT PRIMARY KEY, cwd TEXT)`); err != nil {
+		t.Fatal(err)
+	}
+	checkout := filepath.Join(t.TempDir(), "shop")
+	if err := os.MkdirAll(checkout, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Exec(`INSERT INTO sessions (id, cwd) VALUES ('local-key', ?)`, checkout); err != nil {
+		t.Fatal(err)
+	}
+	store.Close()
+
+	installDir := filepath.Join(t.TempDir(), ".hermes")
+	if code := runWithInput("hermes", "on_session_start", "", hub.AutonomyWake, hookInput{
+		SessionID: "local-key", Cwd: installDir,
+	}); code != 0 {
+		t.Fatalf("hook exit %d", code)
+	}
+
+	h, err := hub.OpenPath(dbPath)
+	if err != nil {
+		t.Fatalf("reopen hub: %v", err)
+	}
+	defer h.Close()
+
+	want := hub.RepoRoom(checkout)
+	sessions, err := h.Who(ctx, want)
+	if err != nil {
+		t.Fatalf("who %s: %v", want, err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("session not in %s; it landed in the payload's directory instead", want)
+	}
+	if sessions[0].Cwd != checkout {
+		t.Fatalf("session cwd = %q, want the checkout %q", sessions[0].Cwd, checkout)
+	}
+}
+
+// When Hermes' store has no answer the payload is used, so a machine without
+// Hermes or a session that is not in the store still joins somewhere.
+func TestHermesJoinFallsBackToThePayloadDirectory(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "room.db")
+	t.Setenv("AGENTS_ROOM_DB", dbPath)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	t.Setenv("HERMES_HOME", filepath.Join(t.TempDir(), "absent"))
+
+	dir := filepath.Join(t.TempDir(), "plain")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := runWithInput("hermes", "on_session_start", "", hub.AutonomyWake, hookInput{
+		SessionID: "local-key", Cwd: dir,
+	}); code != 0 {
+		t.Fatalf("hook exit %d", code)
+	}
+
+	h, err := hub.OpenPath(dbPath)
+	if err != nil {
+		t.Fatalf("reopen hub: %v", err)
+	}
+	defer h.Close()
+	sessions, err := h.Who(ctx, hub.RepoRoom(dir))
+	if err != nil || len(sessions) != 1 {
+		t.Fatalf("session not in the payload's room: %v (%d sessions)", err, len(sessions))
 	}
 }
