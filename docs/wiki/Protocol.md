@@ -65,6 +65,12 @@ indistinguishable by it, so `room_who` reports a separate `liveness` of
 threshold **and** it is gone. It decides gone with the same function
 `room_who` uses, from the same scan.
 
+**Hermes sessions are never pruned while its gateway runs.** A Hermes row
+records the gateway's pid, which outlives every conversation it hosts, and the
+harness key cannot settle it either: liveness reads `/proc/<pid>/environ`, the
+*startup* environment, while Hermes sets `HERMES_SESSION_ID` at run time. Use
+`agents-room leave --session <id>` for those rows.
+
 ### A rejoin raises autonomy, never lowers it
 
 Only `wake` can start a turn in an idle chat. Below it the signal rides a turn

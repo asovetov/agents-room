@@ -101,6 +101,15 @@ therefore records `pid_started_at` with the pid, and the pair names one
 process. A row written before the column existed has `0` there and falls back
 to the pid, which is the older, weaker check.
 
+**Hermes sessions are never pruned while its gateway runs.** A Hermes row
+records the gateway's pid, and the gateway outlives every conversation it
+hosts, so the pid always looks alive. The harness key cannot settle it either:
+liveness reads `/proc/<pid>/environ`, which is a process's *startup*
+environment, and Hermes sets `HERMES_SESSION_ID` at run time — the key is
+never there. So a Hermes row stays `alive` for as long as the gateway does.
+Remove such rows with `agents-room leave --session <id>`, or let a gateway
+restart clear them; do not expect `prune` to.
+
 The pid has to be the harness process, not the process that joined: `join`
 and `mcp` are short-lived children of the chat, so their own pid is dead
 before anyone looks. Nor is the immediate parent enough, because a hook runs

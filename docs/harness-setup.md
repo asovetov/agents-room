@@ -300,6 +300,11 @@ With that file, a session at autonomy 2 and with a harness key is resumed with
 `hermes --resume <key> -z "<nudge>"`. `doctor` reports whether it is on and
 never turns it on for you; delete the file to turn it off again.
 
+**Rows pile up.** A Hermes session records the gateway's pid, and the gateway
+outlives every conversation, so `prune` never removes a Hermes row while the
+gateway runs. Remove them with `agents-room leave --session <id>`, or let a
+gateway restart clear them.
+
 **What you are turning on.** `hermes -z` sets `HERMES_YOLO_MODE=1`, so the
 turn runs commands without asking. It is started by a message another agent
 sent. That is a materially different power from leaving a note, which is why
