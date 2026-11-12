@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -102,7 +103,10 @@ func TestHermesSessionCwdRetryWaitsForALateRow(t *testing.T) {
 	path := filepath.Join(dir, "state.db")
 	t.Setenv("HERMES_HOME", dir)
 
-	db, err := sql.Open("sqlite", "file:"+path)
+	// busy_timeout: the retry opens the same file read-only while this
+	// connection holds it, and on Windows the write blocks rather than
+	// failing fast.
+	db, err := sql.Open("sqlite", "file:"+filepath.ToSlash(path)+"?_pragma=busy_timeout(2000)")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,9 +115,13 @@ func TestHermesSessionCwdRetryWaitsForALateRow(t *testing.T) {
 	}
 	defer db.Close()
 
+	// The insert must not fail silently, or the test would blame the lookup
+	// for a write that never happened.
+	inserted := make(chan error, 1)
 	go func() {
 		time.Sleep(120 * time.Millisecond)
-		db.Exec(`INSERT INTO sessions (id, cwd) VALUES ('local-late', '/late/dir')`)
+		_, err := db.Exec(`INSERT INTO sessions (id, cwd) VALUES ('local-late', '/late/dir')`)
+		inserted <- err
 	}()
 
 	got, err := HermesSessionCwdRetry(context.Background(), "local-late", 2*time.Second)
@@ -122,6 +130,9 @@ func TestHermesSessionCwdRetryWaitsForALateRow(t *testing.T) {
 	}
 	if got != "/late/dir" {
 		t.Fatalf("cwd = %q, want the row that appeared during the wait", got)
+	}
+	if err := <-inserted; err != nil {
+		t.Fatalf("the row the test waited for was never written: %v", err)
 	}
 }
 
@@ -138,5 +149,22 @@ func TestHermesSessionCwdRetryGivesUp(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 2*time.Second {
 		t.Fatalf("retry took %v, want it bounded by the wait", elapsed)
+	}
+}
+
+// A Windows path is a drive letter and backslashes, and "file:C:\..." is a
+// URI the driver cannot open. The lookup writes the path with forward slashes
+// for that reason; this pins the spelling so a later "simplification" back to
+// string concatenation fails here rather than only on the Windows runner.
+func TestHermesStoreDsnSpelling(t *testing.T) {
+	// filepath.ToSlash is a no-op on POSIX, so the code uses ReplaceAll; this
+	// assertion pins that, and would fail if it went back to ToSlash.
+	win := `C:\Users\someone\.hermes\state.db`
+	got := "file:" + strings.ReplaceAll(win, `\`, "/") + "?mode=ro"
+	if strings.Contains(got, `\`) {
+		t.Fatalf("dsn keeps backslashes, which the driver parses as an opaque URI: %q", got)
+	}
+	if !strings.HasPrefix(got, "file:C:/Users/") {
+		t.Fatalf("dsn = %q, want the drive letter followed by forward slashes", got)
 	}
 }

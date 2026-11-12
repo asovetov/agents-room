@@ -67,7 +67,15 @@ func HermesSessionCwd(ctx context.Context, key string) (string, error) {
 	// Read-only: the store belongs to Hermes, and a hook has no business
 	// creating a WAL or taking a write lock on it. mode=ro also makes the
 	// intent obvious to whoever reads this later.
-	dsn := "file:" + path + "?mode=ro&_pragma=busy_timeout(500)"
+	//
+	// The path is written with forward slashes. On Windows it starts with a
+	// drive letter and a backslash, and "file:C:\..." is parsed as a URI
+	// whose body the driver cannot open; "file:C:/..." is the same path in
+	// the one spelling SQLite reads on every platform.
+	//
+	// ReplaceAll, not filepath.ToSlash: on POSIX the latter is a no-op, so a
+	// test that pins this spelling on Linux would pass while Windows broke.
+	dsn := "file:" + strings.ReplaceAll(path, `\`, "/") + "?mode=ro&_pragma=busy_timeout(500)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return "", fmt.Errorf("open hermes store: %w", err)
@@ -98,7 +106,14 @@ func HermesSessionCwdRetry(ctx context.Context, key string, wait time.Duration) 
 	deadline := time.Now().Add(wait)
 	for {
 		cwd, err := HermesSessionCwd(ctx, key)
-		if err != nil || cwd != "" || time.Now().After(deadline) {
+		// A transient error is not an answer. Hermes is writing to its own
+		// store at the same moment, and on a platform where the file is
+		// briefly locked the read fails; retrying is the whole point of this
+		// function, so only the last attempt's error is returned.
+		if err == nil && cwd != "" {
+			return cwd, nil
+		}
+		if time.Now().After(deadline) {
 			return cwd, err
 		}
 		select {
