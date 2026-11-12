@@ -118,3 +118,27 @@ func TestAllowWakeIsSingleFlightPerSession(t *testing.T) {
 		t.Fatal("one session's window silenced another")
 	}
 }
+
+// The environment the turn is started with carries the session id, so its
+// hooks address the session that was woken rather than a new one.
+func TestHermesWakeEnvCarriesTheSessionID(t *testing.T) {
+	var captured *exec.Cmd
+	old := runWake
+	runWake = func(bin, key, line string) *exec.Cmd {
+		captured = exec.Command("true")
+		return captured
+	}
+	t.Cleanup(func() { runWake = old })
+	t.Setenv("HERMES_BIN", "/usr/local/bin/hermes")
+
+	if err := HermesCLI("local-abc", "line"); err != nil {
+		t.Fatalf("wake: %v", err)
+	}
+	want := "HERMES_SESSION_ID=local-abc"
+	for _, e := range captured.Env {
+		if e == want {
+			return
+		}
+	}
+	t.Fatalf("the woken turn's environment lacks %q; its hooks would register a new session", want)
+}

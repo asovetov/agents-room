@@ -36,6 +36,16 @@ func HermesCLI(harnessKey, line string) error {
 	}
 
 	cmd := runWake(bin, harnessKey, line)
+	// The woken turn must be the same session, or it reads an empty inbox.
+	//
+	// Hermes exports HERMES_SESSION_ID to a turn's children but the process we
+	// start has none: its session-start hook then registers a new, nameless
+	// session, while the agent's own msg_recv runs under the resumed id. The
+	// message stays `accepted` for ever and the reply comes from the other
+	// row -- seen live: the woken turn reported "0 unread" while the message
+	// sat on the session it was meant for. Setting the variable here makes the
+	// hook rejoin the session that was woken, so the read lands on it.
+	cmd.Env = append(os.Environ(), "HERMES_SESSION_ID="+harnessKey)
 	// The turn is not this process's to wait for: the hook that emits it has a
 	// time budget of seconds and the turn can run for minutes. Its output goes
 	// to a log rather than the harness's stdout, which is a channel the
