@@ -27,7 +27,22 @@ import (
 // The line stays one line: past two rooms it says how many more there are
 // rather than growing without bound.
 func Nudge(rooms []string, n int) string {
+	return NudgeFor("", rooms, n)
+}
+
+// NudgeFor is Nudge that names the session the messages are waiting for.
+//
+// A woken Hermes turn may not be the session the message is addressed to: its
+// MCP server is started with a filtered environment that carries no session
+// id, so a room_join it makes registers a new, nameless session and its
+// msg_recv reads an empty inbox. The id in the line is the one the delivery
+// actually belongs to, and it is the only thing the agent can act on.
+func NudgeFor(sessionID string, rooms []string, n int) string {
 	if len(rooms) == 0 {
+		if sessionID != "" {
+			return fmt.Sprintf("[agents-room] %d unread for session %s; call msg_recv with session_id=%s",
+				n, sessionID, sessionID)
+		}
 		return fmt.Sprintf("[agents-room] %d unread; call msg_recv", n)
 	}
 	named := rooms
@@ -46,6 +61,10 @@ func Nudge(rooms []string, n int) string {
 	}
 	if more > 0 {
 		where += fmt.Sprintf(" and %d more", more)
+	}
+	if sessionID != "" {
+		return fmt.Sprintf("[agents-room] %d unread in %s for session %s; call msg_recv with session_id=%s",
+			n, where, sessionID, sessionID)
 	}
 	return fmt.Sprintf("[agents-room] %d unread in %s; call msg_recv", n, where)
 }

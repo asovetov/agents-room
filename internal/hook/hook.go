@@ -132,6 +132,23 @@ func runWithInput(harness, event, room string, autonomy int, in hookInput) int {
 		return 0
 
 	case eventLeave:
+		// A one-shot turn is not the end of the session.
+		//
+		// `hermes -z`, which is what a wake starts, fires on_session_end when
+		// its single turn finishes, and Hermes also fires it on resume. Both
+		// were treated as "the chat is over", so a woken session was deleted
+		// minutes after it woke -- taking its unread deliveries with it, and
+		// leaving the sender's message `accepted` for ever. Seen live: a
+		// session woke, answered, and was gone five minutes later.
+		//
+		// The wake spawn marks itself with AGENTS_ROOM_WAKE, and such a turn
+		// only touches last_seen. A real end still leaves the room.
+		if os.Getenv("AGENTS_ROOM_WAKE") != "" {
+			if s, err := h.FindSession(ctx, roomName, harness, in.SessionID); err == nil && s != nil {
+				_ = h.Touch(ctx, s.ID)
+			}
+			return 0
+		}
 		if s, err := h.FindSession(ctx, roomName, harness, in.SessionID); err == nil && s != nil {
 			h.Leave(ctx, s.ID)
 		}
@@ -272,7 +289,14 @@ func wakeIdleRecipients(ctx context.Context, h *hub.Hub, minAge int64) int {
 	}
 	posted := 0
 	for _, w := range wakers {
-		line := wake.Nudge(w.Rooms, w.Pending)
+		// The session id goes in the line for the Hermes CLI backend: its MCP
+		// server cannot know it, so without the id a woken agent calls
+		// msg_recv on the wrong (new) session and reads an empty inbox.
+		sessionID := ""
+		if w.Backend == hub.WakeHermesCLI {
+			sessionID = w.SessionID
+		}
+		line := wake.NudgeFor(sessionID, w.Rooms, w.Pending)
 		switch w.Backend {
 		case hub.WakeSocket:
 			if err := wake.PostToSocket(w.Socket, "", line); err != nil {

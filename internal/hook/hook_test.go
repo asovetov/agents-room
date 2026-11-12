@@ -666,3 +666,84 @@ func TestHermesJoinFallsBackToThePayloadDirectory(t *testing.T) {
 		t.Fatalf("session not in the payload's room: %v (%d sessions)", err, len(sessions))
 	}
 }
+
+// A wake turn's end is not the end of the session.
+//
+// `hermes -z` -- what a wake starts -- fires on_session_end when its single
+// turn finishes, and Hermes fires it on resume too. Treated as "the chat is
+// over", a woken session was deleted minutes after it woke, taking its unread
+// deliveries with it. The wake spawn marks itself, and such a turn must not
+// remove the session.
+func TestWakeTurnEndDoesNotRemoveTheSession(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "room.db")
+	t.Setenv("AGENTS_ROOM_DB", dbPath)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	t.Setenv("HERMES_HOME", filepath.Join(t.TempDir(), "absent"))
+
+	dir := filepath.Join(t.TempDir(), "shop")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if code := runWithInput("hermes", "on_session_start", "", hub.AutonomyWake, hookInput{
+		SessionID: "local-key", Cwd: dir,
+	}); code != 0 {
+		t.Fatalf("join hook exit %d", code)
+	}
+
+	// The wake turn's end, marked as such.
+	t.Setenv("AGENTS_ROOM_WAKE", "1")
+	if code := runWithInput("hermes", "on_session_end", "", hub.AutonomyWake, hookInput{
+		SessionID: "local-key", Cwd: dir,
+	}); code != 0 {
+		t.Fatalf("end hook exit %d", code)
+	}
+
+	h, err := hub.OpenPath(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	sessions, err := h.Who(ctx, hub.RepoRoom(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 {
+		t.Fatalf("the woken session was removed by its own turn's end; %d left", len(sessions))
+	}
+}
+
+// An ordinary end still leaves the room, or a closed chat would sit in `who`
+// for ever.
+func TestOrdinaryEndStillLeavesTheRoom(t *testing.T) {
+	ctx := context.Background()
+	dbPath := filepath.Join(t.TempDir(), "room.db")
+	t.Setenv("AGENTS_ROOM_DB", dbPath)
+	t.Setenv("AGENTS_ROOM_PID", "4242")
+	t.Setenv("HERMES_HOME", filepath.Join(t.TempDir(), "absent"))
+	t.Setenv("AGENTS_ROOM_WAKE", "")
+
+	dir := filepath.Join(t.TempDir(), "shop")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	runWithInput("hermes", "on_session_start", "", hub.AutonomyWake, hookInput{
+		SessionID: "local-key", Cwd: dir,
+	})
+	runWithInput("hermes", "on_session_finalize", "", hub.AutonomyWake, hookInput{
+		SessionID: "local-key", Cwd: dir,
+	})
+
+	h, err := hub.OpenPath(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer h.Close()
+	sessions, err := h.Who(ctx, hub.RepoRoom(dir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 0 {
+		t.Fatalf("a real session end did not remove the session: %d left", len(sessions))
+	}
+}

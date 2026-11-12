@@ -427,3 +427,30 @@ func TestCheckNamesTheRoomTheMessageCameThrough(t *testing.T) {
 		t.Fatalf("nudge %q names a room the reader is not in", res.Line)
 	}
 }
+
+// The nudge for a Hermes CLI wake names the session the messages belong to.
+//
+// A woken turn's MCP server is started with a filtered environment that has no
+// session id, so the agent's own msg_recv reads an empty inbox while the
+// message sits on the session that was woken. The id in the line is the one
+// thing that lets it read the right inbox.
+func TestNudgeForNamesTheSession(t *testing.T) {
+	line := NudgeFor("abc123", []string{"repo:shop"}, 2)
+	for _, want := range []string{"abc123", "2 unread", "repo:shop", "msg_recv"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("line = %q, want it to contain %q", line, want)
+		}
+	}
+	// One line: the harness reads it as a single message.
+	if strings.Contains(line, "\n") {
+		t.Fatalf("nudge spans lines: %q", line)
+	}
+}
+
+// Without an id the line stays what it was, so the socket backend is
+// unaffected.
+func TestNudgeForWithoutASessionIsTheOldLine(t *testing.T) {
+	if got, want := NudgeFor("", []string{"repo:shop"}, 1), Nudge([]string{"repo:shop"}, 1); got != want {
+		t.Fatalf("NudgeFor with no id = %q, want %q", got, want)
+	}
+}
