@@ -306,6 +306,23 @@ sent. That is a materially different power from leaving a note, which is why
 it is a deliberate line in a file rather than a default. One wake is emitted
 per session per minute, not per message.
 
+**The turn may not run under the session's id.** `hermes --resume <key>` lifts
+the conversation history, but the tools inside that turn see a different
+identity: Hermes starts an MCP server with a filtered environment that carries
+no session id, so a `room_join` made from inside the turn registers a new,
+nameless session and `msg_recv` reads an empty inbox. This is why the wake
+line names the addressee explicitly:
+
+```
+[agents-room] 2 unread in "repo:shop" for session <id>; call msg_recv with
+session_id=<id> (this turn may run under a different id), then reply with
+msg_send --session <id>
+```
+
+An agent that follows it reads the right inbox even though its own id is
+different. Nothing in this project can make the MCP server learn the id —
+that would need a change in Hermes.
+
 ## Any other MCP client
 
 Register `agents-room mcp` as a stdio server. The agent calls `room_join`

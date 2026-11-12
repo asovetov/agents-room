@@ -40,8 +40,9 @@ func Nudge(rooms []string, n int) string {
 func NudgeFor(sessionID string, rooms []string, n int) string {
 	if len(rooms) == 0 {
 		if sessionID != "" {
-			return fmt.Sprintf("[agents-room] %d unread for session %s; call msg_recv with session_id=%s",
-				n, sessionID, sessionID)
+			return fmt.Sprintf("[agents-room] %d unread for session %s; call msg_recv with "+
+				"session_id=%s (this turn may run under a different id), then reply with "+
+				"msg_send --session %s", n, sessionID, sessionID, sessionID)
 		}
 		return fmt.Sprintf("[agents-room] %d unread; call msg_recv", n)
 	}
@@ -63,8 +64,10 @@ func NudgeFor(sessionID string, rooms []string, n int) string {
 		where += fmt.Sprintf(" and %d more", more)
 	}
 	if sessionID != "" {
-		return fmt.Sprintf("[agents-room] %d unread in %s for session %s; call msg_recv with session_id=%s",
-			n, where, sessionID, sessionID)
+		return fmt.Sprintf("[agents-room] %d unread in %s for session %s; call msg_recv with "+
+			"session_id=%s (this turn may run under a different id), then reply with "+
+			"msg_send --session %s",
+			n, where, sessionID, sessionID, sessionID)
 	}
 	return fmt.Sprintf("[agents-room] %d unread in %s; call msg_recv", n, where)
 }

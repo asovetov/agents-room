@@ -732,3 +732,15 @@ gateway:
 		t.Fatal("a second --fix rewrote an already-wired config")
 	}
 }
+
+// `accepted` is a wake signal, not a person reading. Rendering it bare makes
+// "nobody looked" and "we woke it and it still has not read" the same line.
+func TestDescribeStatesDistinguishesAcceptedFromRead(t *testing.T) {
+	got := describeStates(map[string]int{hub.StateAccepted: 1, hub.StateRead: 2})
+	if !strings.Contains(got, "accepted (woken, not read)") {
+		t.Fatalf("accepted is rendered without the distinction: %q", got)
+	}
+	if !strings.Contains(got, "2 read") {
+		t.Fatalf("read count missing: %q", got)
+	}
+}

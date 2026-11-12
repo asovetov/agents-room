@@ -507,10 +507,20 @@ func describeStates(states map[string]int) string {
 		hub.StateStored, hub.StateOffered, hub.StateAccepted,
 		hub.StateRead, hub.StateAcked, hub.StateExpired, hub.StateUndeliverable,
 	}
+	// `accepted` is not a person reading the message: it is a wake signal the
+	// harness took. Rendering it as a bare state makes "nobody has looked" and
+	// "we woke it and it still has not read" look the same, which is the
+	// question a sender chasing a reply actually has.
+	label := func(state string) string {
+		if state == hub.StateAccepted {
+			return "accepted (woken, not read)"
+		}
+		return state
+	}
 	var parts []string
 	for _, state := range order {
 		if n := states[state]; n > 0 {
-			parts = append(parts, fmt.Sprintf("%d %s", n, state))
+			parts = append(parts, fmt.Sprintf("%d %s", n, label(state)))
 		}
 	}
 	return strings.Join(parts, ", ")
