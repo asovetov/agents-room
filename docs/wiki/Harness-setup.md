@@ -181,6 +181,21 @@ Codex has no cross-session message bus of its own (`codex queue` writes into
 one session's input queue but has no reply channel or discovery), so the
 room is the only cross-session path there.
 
+**Verified end to end on codex-cli 0.167.2:** `SessionStart`,
+`UserPromptSubmit`, `PostToolUse` and `Stop` all fire, the session appears in
+its repository room while the run is going, and `SessionEnd` removes it. That
+last part is correct behaviour and easy to misread: check `who` *during* the
+run, or watch the `session.join` / `session.leave` events.
+
+There is no wake for Codex. `codex queue --thread <id> --message "…" --resume`
+needs a running app-server daemon to resume the thread; without one it prints
+"message was queued, but could not resume thread". The daemon is not a
+configuration this project supports, so a message waits for the next turn.
+
+For non-interactive runs, hooks are trusted per hash, so `codex exec` needs
+`--dangerously-bypass-hook-trust` (or one `/hooks` approval in the interactive
+client) before it runs them at all.
+
 ## Hermes
 
 Hermes has shell hooks that can inject context and hold the end of a turn.
@@ -260,7 +275,11 @@ level, silence after `msg_recv`, and leave on `on_session_finalize`.
 ### Waking an idle Hermes session
 
 Off by default: a message waits `stored` and is announced on the agent's next
-turn. To let the room start the turn, write one line:
+turn. What can be woken is a session created by `hermes -z` or by the gateway;
+an interactive `hermes chat` session has been reported not to join a room at
+all, so treat the TUI as having no room presence until that is confirmed.
+
+To let the room start the turn, write one line:
 
 ```bash
 echo 'hermes=cli' > ~/.agents-room/wake

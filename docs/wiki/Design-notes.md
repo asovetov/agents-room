@@ -45,9 +45,10 @@ Author of the idea: Anton Sovetov. License: GPLv3, permanently, never sold.
 
 ## Open
 
-1. A live Codex check. The adapter follows the Codex source contract
-   (Stop needs the JSON envelope, tool events need it too) but Codex is not
-   installed on the author's machine, so it has not been run end to end.
+1. ~~A live Codex check.~~ Done: end to end on codex-cli 0.167.2 — join,
+   prompt, tool, stop and leave all work. No wake for Codex: `codex queue
+   --resume` needs an app-server daemon, which is not a supported
+   configuration.
 2. Whether `hold` should have a per-turn cap lower than the harness default.
 3. Automatic pruning. `agents-room prune` exists, but no timer runs it.
 4. Sending into a room where you are the only member, or to a `file:`

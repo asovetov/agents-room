@@ -254,7 +254,7 @@ continuations).
 | M3 Claude Code wake adapter | done, verified against a live inbox socket |
 | M4 drift and `file:`/`tag:` selectors | done, tested |
 | M5 `watch` view | done, polling |
-| M6 Codex and Hermes adapters | both have dedicated adapters built against their source contracts; Hermes verified live, Codex verified by contract only |
+| M6 Codex and Hermes adapters | both verified live: Hermes through its shell-hook dispatcher, Codex end to end on 0.167.2 (join, prompt, tool, stop, leave); no wake for Codex, its `codex queue --resume` needs an app-server daemon |
 | M6.5 renew, prune, autonomy cap | done, tested |
 | M6.6 session identity | `liveness` from the harness key, `pid_started_at` against pid reuse, duplicate chats collapsed by key with their deliveries carried over; schema version 5 |
 | M6.7 room history, path warnings, watch messages, unhooked-session check | `room_history` and `agents-room history`, `message_rooms` so a shared room's history is complete, warnings for a lease or `file:` selector that names another repository, messages in `watch`, and a doctor check for a live session whose hook is not running; schema version 6 |

@@ -179,6 +179,22 @@ Codex has no cross-session message bus of its own (`codex queue` writes into
 one session's input queue but has no reply channel or discovery), so the
 room is the only cross-session path there.
 
+**Verified end to end on codex-cli 0.167.2:** `SessionStart`,
+`UserPromptSubmit`, `PostToolUse` and `Stop` all fire, the session appears in
+its repository room while the run is going, and `SessionEnd` removes it. That
+last part is correct behaviour and easy to misread: check `who` *during* the
+run, or watch the `session.join` / `session.leave` events.
+
+There is no wake for Codex. `codex queue --thread <id> --message "…" --resume`
+puts the message in a session's input queue, but resuming needs a running
+app-server daemon; without one it prints "message was queued, but could not
+resume thread". The daemon is not a configuration this project supports, so a
+message waits for the agent's next turn.
+
+Also for non-interactive runs: hooks are trusted per hash, so `codex exec`
+needs `--dangerously-bypass-hook-trust` (or one `/hooks` approval in the
+interactive client) before it will run them at all.
+
 ## Hermes
 
 Hermes has shell hooks that can inject context and hold the end of a turn.
@@ -265,6 +281,13 @@ level, silence after `msg_recv`, and leave on `on_session_finalize`.
 By default a Hermes session is not woken: a message waits `stored` and is
 announced on the agent's next turn, because Hermes sets no inbox socket and
 there is no signal channel to use.
+
+What can be woken is a session created by `hermes -z` or by the gateway: those
+are the ones whose hooks register them in a room. An interactive `hermes chat`
+session has been reported not to join at all — its `on_session_start` does not
+run — so treat the TUI as a client with no room presence until that is
+confirmed and fixed. This has not been verified here; check `agents-room who`
+while the TUI is open before relying on it.
 
 There is a way to start the turn from the room, and it is **off unless you
 turn it on**:
