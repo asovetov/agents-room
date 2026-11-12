@@ -656,3 +656,76 @@ func TestHistoryCommandOnAnEmptyRoom(t *testing.T) {
 		t.Fatalf("empty room did not say so:\n%s", out)
 	}
 }
+
+// doctor --fix has to wire a Hermes install that has no agents-room entries,
+// and has to be safe to run twice.
+func TestDoctorFixesHermesConfig(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("AGENTS_ROOM_DB", filepath.Join(home, "room.db"))
+
+	hermesDir := filepath.Join(home, ".hermes")
+	if err := os.MkdirAll(hermesDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(hermesDir, "config.yaml")
+	original := `# hand-written config
+hooks:
+  pre_tool_call:
+    - command: /usr/local/bin/other-tool hook
+      timeout: 20
+
+# a comment that must survive
+gateway:
+  multiplex_profiles: true
+`
+	if err := os.WriteFile(configPath, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	run := setup(t)
+	code, out, _ := run("doctor", "--fix", "--dry-run")
+	if code == 0 {
+		t.Fatalf("doctor found no problem with an unwired Hermes config:\n%s", out)
+	}
+	if !strings.Contains(out, "missing") {
+		t.Fatalf("dry run does not say what is missing:\n%s", out)
+	}
+	// --dry-run must not touch the file.
+	after, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != original {
+		t.Fatal("--dry-run changed the config")
+	}
+
+	run("doctor", "--fix")
+	written, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(written)
+	for _, want := range []string{
+		"--harness=hermes --event=on_session_start",
+		"--harness=hermes --event=Stop",
+		"hooks_auto_accept: true",
+		"agents-room:",
+		"# a comment that must survive",
+		"/usr/local/bin/other-tool hook",
+	} {
+		if !strings.Contains(text, want) {
+			t.Errorf("fixed config lacks %q:\n%s", want, text)
+		}
+	}
+
+	// Running it again must not change anything.
+	run("doctor", "--fix")
+	again, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(again) != text {
+		t.Fatal("a second --fix rewrote an already-wired config")
+	}
+}

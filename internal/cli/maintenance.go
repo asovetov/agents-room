@@ -285,6 +285,7 @@ func runDoctor(ctx context.Context, args []string, stdout, stderr io.Writer) int
 			line(true, "%s has no agents-room entry", path)
 		}
 	}
+	reportHermesConfig(home, stdout, stderr, *fix, *dryRun, &problems, line)
 
 	fmt.Fprintln(stdout, "\nWake signal")
 	if p := os.Getenv("CLAUDE_CODE_MESSAGING_SOCKET"); p != "" {
@@ -536,4 +537,55 @@ func confirm(r io.Reader) bool {
 		return true
 	}
 	return false
+}
+
+// reportHermesConfig says what a Hermes install is missing, and with --fix
+// writes it.
+//
+// Hermes needs four things that the generic "does the file mention
+// agents-room" check cannot see: the six hooks, the MCP server that lets a
+// woken agent actually fetch its messages, hooks_auto_accept so Hermes does
+// not wait for a prompt it will never get, and autonomy 2 so a waiting
+// message can start a turn.
+//
+// The edit is a text splice with a backup, because the file is the
+// operator's, full of comments, and rewriting it from a parsed document would
+// throw them away. An already-wired file plans no changes, so --fix is safe
+// to run repeatedly.
+func reportHermesConfig(home string, stdout, stderr io.Writer, fix, dryRun bool,
+	problems *int, line func(bool, string, ...any)) {
+
+	path := filepath.Join(home, ".hermes", "config.yaml")
+	if _, err := os.Stat(path); err != nil {
+		return
+	}
+	plan, err := config.PlanHermes(path)
+	if err != nil {
+		line(false, "read %s: %v", path, err)
+		return
+	}
+	if plan.Complete() {
+		line(true, "%s wires every Hermes hook and the MCP server", path)
+		return
+	}
+
+	line(false, "%s is missing %s", path, strings.Join(plan.Missing, ", "))
+	if !fix {
+		fmt.Fprintln(stdout, "     rerun with --fix to add them, or --fix --dry-run to see what would change")
+		return
+	}
+	if dryRun {
+		fmt.Fprintln(stdout, "     --dry-run: nothing changed")
+		return
+	}
+	if err := config.ApplyHermesPlan(plan, time.Now()); err != nil {
+		fmt.Fprintf(stderr, "doctor: %v\n", err)
+		return
+	}
+	if *problems > 0 {
+		*problems--
+	}
+	fmt.Fprintf(stdout, "     wrote %s (backup kept beside it)\n", path)
+	fmt.Fprintln(stdout, "     a Hermes session must run once for the hooks to take effect; "+
+		"`agents-room who` should then list it in its repository's room")
 }
