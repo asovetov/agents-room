@@ -385,6 +385,21 @@ again at wake level starts a second turn for a message the first turn was
 already about, and a turn whose `Stop` signals again never ends. Once signalled,
 a message waits for `msg_recv`.
 
+**`accepted` can be the last state a delivery ever reaches.** It records that
+the harness took the signal, not that anyone read it. When the recipient is in
+the middle of a long turn, the nudge becomes one more result among its tool
+output, the agent carries on with its own work, and nothing moves the delivery
+further. Seen live: four deliveries at `accepted` for up to five hours on a
+session that was demonstrably working, while an earlier message from the same
+sender had reached `read`.
+
+The retry that rescues `offered` deliberately does not touch `accepted`: at
+wake level a repeat is a second turn, which is the loop the rule exists to
+prevent. So a sender must read `accepted` as "it was told, it has not read,
+and it may not" rather than "a read is coming". `sent` says this in words.
+Re-announcing an `accepted` delivery safely would need a signal that the
+recipient's turn has ended, which no harness gives us yet.
+
 A wake signal never carries the body. It carries one line:
 
 ```

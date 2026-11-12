@@ -275,9 +275,11 @@ level, silence after `msg_recv`, and leave on `on_session_finalize`.
 ### Waking an idle Hermes session
 
 Off by default: a message waits `stored` and is announced on the agent's next
-turn. What can be woken is a session created by `hermes -z` or by the gateway;
-an interactive `hermes chat` session has been reported not to join a room at
-all, so treat the TUI as having no room presence until that is confirmed.
+turn. An interactive `hermes chat` (TUI) joins too, but only from its first
+message: `on_session_start` does not fire, so there is no row until then, and
+after that the hooks run on every turn. Verified — a TUI opened at 01:00:30
+had no row, the first message at 01:03:09 produced a `session.rejoin` with a
+harness key.
 
 To let the room start the turn, write one line:
 

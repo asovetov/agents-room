@@ -737,7 +737,7 @@ gateway:
 // "nobody looked" and "we woke it and it still has not read" the same line.
 func TestDescribeStatesDistinguishesAcceptedFromRead(t *testing.T) {
 	got := describeStates(map[string]int{hub.StateAccepted: 1, hub.StateRead: 2})
-	if !strings.Contains(got, "accepted (woken, not read)") {
+	if !strings.Contains(got, "accepted (woken, not read; the recipient may be mid-turn)") {
 		t.Fatalf("accepted is rendered without the distinction: %q", got)
 	}
 	if !strings.Contains(got, "2 read") {

@@ -282,12 +282,16 @@ By default a Hermes session is not woken: a message waits `stored` and is
 announced on the agent's next turn, because Hermes sets no inbox socket and
 there is no signal channel to use.
 
-What can be woken is a session created by `hermes -z` or by the gateway: those
-are the ones whose hooks register them in a room. An interactive `hermes chat`
-session has been reported not to join at all — its `on_session_start` does not
-run — so treat the TUI as a client with no room presence until that is
-confirmed and fixed. This has not been verified here; check `agents-room who`
-while the TUI is open before relying on it.
+An interactive `hermes chat` (TUI) joins too, but not at startup: its
+`on_session_start` does not fire, so the session appears in the room only when
+the first message is sent, and from then on the hooks run on every turn.
+Verified: a TUI opened at 01:00:30 had no row; the first message at 01:03:09
+produced a `session.rejoin` with a harness key, and a second message moved
+`last_seen`. So a TUI session is addressable — and wakeable — from its first
+turn onwards, not before.
+
+What is woken while idle is a session that has a harness key and autonomy 2;
+before its first message a TUI session has no row to wake.
 
 There is a way to start the turn from the room, and it is **off unless you
 turn it on**:

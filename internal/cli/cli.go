@@ -511,9 +511,15 @@ func describeStates(states map[string]int) string {
 	// harness took. Rendering it as a bare state makes "nobody has looked" and
 	// "we woke it and it still has not read" look the same, which is the
 	// question a sender chasing a reply actually has.
+	//
+	// A delivery can stay accepted for ever: the harness took the signal while
+	// the recipient was mid-turn, the nudge became one more result among its
+	// tool output, and no state transition follows. Seen live for five hours on
+	// a session that was demonstrably working. The wording says so rather than
+	// implying a read is coming.
 	label := func(state string) string {
 		if state == hub.StateAccepted {
-			return "accepted (woken, not read)"
+			return "accepted (woken, not read; the recipient may be mid-turn)"
 		}
 		return state
 	}
